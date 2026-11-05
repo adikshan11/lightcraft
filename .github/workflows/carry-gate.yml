@@ -1,0 +1,22 @@
+name: Same gate as CI for lightcraft 3744
+
+# On a throwaway branch of the fork only: the inputs are copied from ci.yml, which the upstream
+# repository hasn't yet approved to run for this pull request.
+on:
+  push:
+    branches: [ci-gate-3744]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    uses: storytold/craft-common-actions/.github/workflows/gate.yml@main
+    with:
+      craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+      timeout-minutes: 90
+      tools: ""
+      packages: >-
+        pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev
+        libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev mesa-vulkan-drivers
+        libgl1-mesa-dev libdbus-1-dev
