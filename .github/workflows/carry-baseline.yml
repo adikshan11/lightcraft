@@ -1,0 +1,22 @@
+name: Plain main on Windows, for lightcraft 3744
+
+# On a throwaway branch of the fork only: does this test fail without the pull request?
+on:
+  push:
+    branches: [ci-main-baseline]
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust 1.95
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --no-self-update
+          rustup default 1.95.0
+      - name: The TIFF size test, on main
+        run: cargo test --locked -p lightcraft-engine --lib sixteen_bit_zip_tiff_is_never_larger_than_uncompressed -- --nocapture
