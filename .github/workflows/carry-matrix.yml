@@ -1,0 +1,34 @@
+name: Cross-platform check for lightcraft 3744
+
+# On a throwaway branch of the fork only. Not part of the pull request.
+on:
+  push:
+    branches: [ci-matrix-3744]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 170
+    env:
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust 1.95
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --no-self-update
+          rustup default 1.95.0
+      - name: Engine, MCP and CLI tests
+        run: cargo test --locked -p lightcraft-engine -p lightcraft-mcp -p lightcraft-cli --no-fail-fast
+      - name: The folder lock's own tests, with their output
+        run: cargo test --locked -p lightcraft-engine --lib file_access -- --nocapture --test-threads=1
+      - name: Without the fixes, their tests have to fail
+        if: runner.os == 'Windows'
+        run: python .github/carry/mutate.py
