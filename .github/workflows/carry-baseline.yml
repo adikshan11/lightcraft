@@ -18,5 +18,11 @@ jobs:
         run: |
           rustup toolchain install 1.95.0 --profile minimal --no-self-update
           rustup default 1.95.0
-      - name: The TIFF size test, on main
+      - name: Engine, MCP and CLI tests, exactly as on the pull request
+        run: cargo test --locked -p lightcraft-engine -p lightcraft-mcp -p lightcraft-cli --no-fail-fast
+      - name: The TIFF size test alone, same build
+        if: always()
+        run: cargo test --locked -p lightcraft-engine -p lightcraft-mcp -p lightcraft-cli --lib sixteen_bit_zip_tiff_is_never_larger_than_uncompressed -- --nocapture
+      - name: The TIFF size test alone, engine build
+        if: always()
         run: cargo test --locked -p lightcraft-engine --lib sixteen_bit_zip_tiff_is_never_larger_than_uncompressed -- --nocapture
