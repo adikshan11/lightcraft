@@ -30,6 +30,9 @@ jobs:
       - name: The folder lock's own tests, with their output
         if: always()
         run: cargo test --locked -p lightcraft-engine --lib file_access -- --nocapture --test-threads=1
+      - name: The TIFF size test alone
+        if: always() && runner.os == 'Windows'
+        run: cargo test --locked -p lightcraft-engine -p lightcraft-mcp -p lightcraft-cli --lib sixteen_bit_zip_tiff_is_never_larger_than_uncompressed -- --nocapture
       - name: Without the fixes, their tests have to fail
         if: always() && runner.os == 'Windows'
         run: python .github/carry/mutate.py

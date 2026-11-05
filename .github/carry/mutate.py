@@ -1,4 +1,5 @@
 """Undo the case and junction fixes on this checkout and confirm that their tests fail."""
+import re
 import subprocess
 import sys
 
@@ -13,9 +14,8 @@ s = s.replace(
     "matches!((p.as_os_str().to_str(), r.as_os_str().to_str()), "
     "(Some(a), Some(b)) if a.to_lowercase() == b.to_lowercase())))",
 )
-link = "if allowed && access == Access::Write && let Some(folder) = folder_of_link(path) {"
-assert s.count(link) == 1
-s = s.replace(link, "if false && let Some(folder) = folder_of_link(path) {")
+s, links = re.subn(r"if allowed\s*&& access == Access::Write\s*&& let Some\(folder\)", "if false && let Some(folder)", s)
+assert links == 1
 open(F, "w", encoding="utf-8").write(s)
 
 r = subprocess.run(
