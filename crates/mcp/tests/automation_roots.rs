@@ -44,7 +44,7 @@ fn confined(tag: &str, read: bool, write: bool) -> (Server, PathBuf) {
     let (in_dir, out_dir) = (base.join("in"), base.join("out"));
     let roots = AutomationRoots::new(read.then_some(in_dir.as_path()), write.then_some(out_dir.as_path())).unwrap();
     let session = Session::new().with_fs().with_default_denoise_models().with_system_clock().with_default_face_models();
-    let headless = Headless::new(session.with_default_sam3_model().with_default_slide_templates()).with_automation_roots(roots);
+    let headless = Headless::new(session.with_default_sam3_model().with_default_slide_templates()).with_scoped_automation_roots(roots);
     let server = Server::new(Box::new(headless));
     (server, base)
 }
@@ -76,6 +76,20 @@ fn refused(server: &mut Server, name: &str, args: Value, why: &str) {
     let (error, text, _) = call(server, name, args.clone());
     assert!(error && text.contains(why), "{name} {args} should be refused ({why}): {text}");
     assert!(!text.contains(SECRET), "{name}: {text} leaked secret!");
+}
+
+/// A preset's watermark is held to the roots like one in the call: the export is refused, not
+/// written without it.
+#[test]
+fn export_preset_with_a_watermark_outside_is_refused() {
+    let (mut server, base) = confined("preset_mark", true, true);
+    ok(&mut server, "import", json!({"paths": [s(&base.join("in/photo.png"))]}));
+    let watermark = json!({"image": s(&base.join("outside/secret.png"))});
+    ok(&mut server, "run_command", json!({"command": "export.savePreset", "params": {"name": "marked", "params": {"watermark": watermark}}}));
+    let out = base.join("out/marked.jpg");
+    refused(&mut server, "export", json!({"path": s(&out), "format": "jpeg", "preset": "marked"}), "outside");
+    assert!(!out.exists(), "nothing is written");
+    let _ = std::fs::remove_dir_all(base);
 }
 
 /// Imports only from inside read root.
@@ -484,7 +498,7 @@ fn confined_with_library(tag: &str, read: bool, write: bool) -> (Server, PathBuf
     let roots = AutomationRoots::new(read.then_some(in_dir.as_path()), write.then_some(out_dir.as_path())).unwrap();
     let mut session = Session::new().with_fs().with_default_denoise_models().with_system_clock().with_default_face_models();
     session.open_library(base.join("lib"), false).unwrap();
-    let headless = Headless::new(session.with_default_sam3_model().with_default_slide_templates()).with_automation_roots(roots);
+    let headless = Headless::new(session.with_default_sam3_model().with_default_slide_templates()).with_scoped_automation_roots(roots);
     let server = Server::new(Box::new(headless));
     (server, base)
 }
