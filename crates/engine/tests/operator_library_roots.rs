@@ -24,6 +24,9 @@ fn identity_cube() -> String {
 fn a_profile_elsewhere_is_judged_by_the_roots_while_the_library_opens() {
     let base = std::env::temp_dir().join(format!("lc-operator-library-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    // (spelled as the library will spell its own folder: a temporary folder may be reached through a link)
+    let base = std::fs::canonicalize(&base).unwrap();
     let (root, lib, outside) = (base.join("root"), base.join("lib"), base.join("outside"));
     for d in [&root, &outside] {
         std::fs::create_dir_all(d).unwrap();
@@ -43,7 +46,7 @@ fn a_profile_elsewhere_is_judged_by_the_roots_while_the_library_opens() {
         file: file.to_string_lossy().to_string(),
     };
     s.lut_profiles = vec![entry("lut:operator-own", &own), entry("lut:operator-elsewhere", &elsewhere)];
-    s.persist().unwrap();
+    s.save_prefs().unwrap();
     drop(s);
     let mut again = Session::new().with_fs();
     again.open_operator_library(&lib, false).unwrap();
