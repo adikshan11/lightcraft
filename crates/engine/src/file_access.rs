@@ -400,8 +400,8 @@ impl AutomationRoots {
         if cfg!(windows) && path.components().any(|c| matches!(c, Component::Normal(n) if n.to_str().is_none_or(is_device_name))) {
             return Err(Unresolved::Named(format!("automation path rejected: reserved device names are not allowed: {}", path.display())));
         }
-        let absolute = std::path::absolute(path)
-            .map_err(|e| Unresolved::Hidden(format!("automation path rejected: cannot resolve {}: {e}", path.display())))?;
+        let absolute =
+            std::path::absolute(path).map_err(|e| Unresolved::Hidden(format!("automation path rejected: cannot resolve {}: {e}", path.display())))?;
         // The names below the nearest existing folder, last first.
         let mut missing: Vec<OsString> = vec![];
         let mut at = absolute.as_path();
