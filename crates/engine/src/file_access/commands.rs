@@ -811,12 +811,14 @@ mod tests {
             for (func, body) in functions(code) {
                 let qualified = format!("{name}::{func}");
                 // Library smart previews, a private backup unpack (its sweep, and the folder it removes when dropped),
-                // a staging file this process created, and the link or copy of a source `place` has already checked.
+                // a staging file this process created, the link or copy of a source `place` has already checked, and a helper of
+                // the face tests' nested module, which the cut at the first test module misses.
                 const LIBRARY_OR_PRIVATE: &[&str] = &[
                     "lightroom_catalog.rs::bytes",
                     "lightroom_backup.rs::sweep",
                     "lightroom_backup.rs::drop",
                     "import_move.rs::link_or_copy",
+                    "cmd/face_recognize.rs::finished",
                     "slideshow_export.rs::drop",
                     "smart.rs::check_writable",
                     "smart.rs::files",
