@@ -57,6 +57,10 @@ struct State {
     /// The files found not there (and not found there since).
     gone: HashSet<String>,
     worker: bool,
+    /// The roots that were in force where each asked path was queued: the worker has none of its own.
+    scopes: HashMap<String, crate::file_access::Handoff>,
+    /// The roots in force where the sweep under way was started.
+    sweep_scope: crate::file_access::Handoff,
     /// Bumped when the sweep under way is dropped for another one ([`Availability::restart_sweeps`]).
     sweep_epoch: u64,
     /// Whether file work a sweep gives way to is going on.
@@ -136,6 +140,7 @@ impl Availability {
         let cached = st.known.get(path).copied();
         if cached.is_none_or(|(_, at)| now.saturating_duration_since(at) >= RECHECK) && !st.queued.contains(path) {
             st.queued.insert(path.to_string());
+            st.scopes.insert(path.to_string(), crate::file_access::handoff());
             st.queue.push_back(path.to_string());
             self.start(st, wake);
         }
@@ -173,6 +178,7 @@ impl Availability {
             return false;
         }
         st.sweep = paths.into();
+        st.sweep_scope = crate::file_access::handoff();
         self.start(st, wake);
         true
     }
@@ -219,13 +225,14 @@ impl Availability {
         }
     }
 
+    /// Start the thread that answers the queued and swept paths, each under the roots of whoever asked.
     fn spawn_worker(&self, wake: Waker) {
         let (state, probe) = (self.state.clone(), self.probe.clone());
         let started = std::thread::Builder::new().name("lc-availability".into()).spawn(move || {
             loop {
                 // what was asked first; a sweep's next file when nothing is (unless it is asked
                 // about too, or was checked a moment ago)
-                let (path, asked) = {
+                let (path, asked, scope) = {
                     let mut st = lock(&state);
                     let giving_way = if st.queue.is_empty() && !st.sweep.is_empty() { st.busy.clone() } else { None };
                     if let Some(busy) = giving_way {
@@ -238,7 +245,10 @@ impl Availability {
                         st = lock(&state);
                     }
                     match st.queue.pop_front() {
-                        Some(p) => (p, true),
+                        Some(p) => {
+                            let scope = st.scopes.remove(&p).unwrap_or_default();
+                            (p, true, scope)
+                        }
                         None => loop {
                             let Some(p) = st.sweep.pop_front() else {
                                 st.worker = false;
@@ -246,12 +256,14 @@ impl Availability {
                             };
                             let fresh = st.known.get(&p).is_some_and(|(_, at)| at.elapsed() < RECHECK);
                             if !fresh && !st.queued.contains(&p) {
-                                break (p, false);
+                                let scope = st.sweep_scope.clone();
+                                break (p, false, scope);
                             }
                         },
                     }
                 };
-                let ok = probe(&path);
+                // the worker has no roots of its own: the one that asked decides what may be looked at
+                let ok = scope.run(|| probe(&path));
                 let wakes = {
                     let mut st = lock(&state);
                     if asked {
@@ -283,6 +295,40 @@ impl Availability {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The worker has no roots of its own: it looks under the roots of the thread that asked, and
+    /// not under those of whichever thread started it.
+    #[test]
+    fn the_worker_probes_under_the_roots_of_the_thread_that_asked() {
+        use crate::file_access::{AutomationRoots, confine, current};
+        let dir = std::env::temp_dir().join(format!("lc-avail-roots-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let roots = AutomationRoots::new(Some(&dir), Some(&dir)).unwrap().unwrap();
+        let (asked, confined) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let (a2, c2) = (asked.clone(), confined.clone());
+        let mut a = Availability::default();
+        a.set_probe(Arc::new(move |_| {
+            a2.fetch_add(1, Ordering::Relaxed);
+            if current().is_some() {
+                c2.fetch_add(1, Ordering::Relaxed);
+            }
+            true
+        }));
+        a.run_in_background(Arc::new(|| {}));
+        confine(Some(&roots), || {
+            a.exists("/in/the/roots.jpg");
+            assert!(a.sweep(vec!["/in/the/sweep.jpg".into()]));
+        });
+        for _ in 0..200 {
+            if asked.load(Ordering::Relaxed) >= 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert_eq!(asked.load(Ordering::Relaxed), 2, "the asked path and the sweep's");
+        assert_eq!(confined.load(Ordering::Relaxed), 2, "both under the roots that were in force where they were asked");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn synchronous_by_default() {

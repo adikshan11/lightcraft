@@ -334,3 +334,44 @@ fn a_link_from_outside_the_write_root_does_not_take_the_merge_out() {
     assert!(only_the_link(), "nothing is created outside");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A merge preview reads its photos on workers that have no roots of their own: every read is made
+/// under the roots in force where the preview was asked for.
+#[test]
+fn preview_workers_read_under_the_roots_of_the_caller() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = temp_dir("preview-roots");
+    std::fs::create_dir_all(dir.join("in")).unwrap();
+    let (reads, bare) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (r2, b2) = (reads.clone(), bare.clone());
+    let reader: crate::merge::ByteReader = Arc::new(move |_| {
+        r2.fetch_add(1, Ordering::Relaxed);
+        if crate::file_access::current().is_none() {
+            b2.fetch_add(1, Ordering::Relaxed);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        Err("stop here".into())
+    });
+    let roots = crate::file_access::AutomationRoots::new(Some(&dir.join("in")), None).unwrap().unwrap();
+    let mut s = Session::new();
+    s.media.file_bytes = Some(reader);
+    let ids: Vec<lightcraft_catalog::PhotoId> = (0..12)
+        .map(|i| {
+            let id = s.catalog.alloc_photo_id();
+            let path = dir.join(format!("in/{i}.jpg")).to_string_lossy().to_string();
+            let photo = lightcraft_catalog::Photo::new(id, lightcraft_catalog::Source::File { path }, "x.jpg", "JPEG", 60, 40, "2026-01-01T10:00:00");
+            s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(photo) }).unwrap();
+            id
+        })
+        .collect();
+    crate::file_access::confine(Some(&roots), || {
+        let (kind, finish) = crate::merge::parse("merge.hdr", &json!({})).unwrap();
+        let job = s.plan_merge(kind, finish, &ids, true).unwrap();
+        let progress: &crate::merge::ProgressFn = &|_, _| true;
+        assert!(job.run(progress).is_err());
+    });
+    assert!(reads.load(Ordering::Relaxed) >= 2, "the preview read its photos in parallel");
+    assert_eq!(bare.load(Ordering::Relaxed), 0, "a read was made with no roots in force");
+    let _ = std::fs::remove_dir_all(&dir);
+}

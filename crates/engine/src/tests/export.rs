@@ -1612,3 +1612,27 @@ fn a_user_preset_naming_a_built_in_is_renamed_when_the_library_opens() {
     assert_eq!((b["format"].as_str(), b["longEdge"].as_u64()), (Some("jpeg"), Some(2048)), "{b}");
     let _ = std::fs::remove_dir_all(&lib);
 }
+
+/// A logo read under automation roots is decoded from the file, never taken from the cache a read made
+/// elsewhere filled: the cache is the whole process's and a hit proves nothing about this path.
+#[test]
+fn a_confined_logo_read_does_not_take_a_decode_another_read_cached() {
+    use crate::file_access::{AutomationRoots, confine};
+    let dir = temp_dir("logo-cache");
+    let path = dir.join("logo.png");
+    let write = |shade: u8| {
+        let img = lightcraft_raster::Rgba8::from_fn(8, 8, |_, _| [shade, 0, 0, 255]);
+        std::fs::write(&path, lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &Default::default()).unwrap()).unwrap();
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_768_370_328);
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(t).unwrap();
+    };
+    let text = path.to_string_lossy().to_string();
+    write(200);
+    let first = crate::export::watermark_logo(&text).unwrap();
+    // the file is replaced by another with the same time, as a link's target could be
+    write(40);
+    let roots = AutomationRoots::new(Some(&dir), Some(&dir)).unwrap().unwrap();
+    let confined = confine(Some(&roots), || crate::export::watermark_logo(&text)).unwrap();
+    assert_ne!(confined.data, first.data, "decoded again, not taken from the cache");
+    let _ = std::fs::remove_dir_all(&dir);
+}

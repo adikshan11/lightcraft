@@ -228,6 +228,24 @@ thread_local! {
     static SCOPE: RefCell<Option<Scope>> = const { RefCell::new(None) };
 }
 
+/// The roots in force on one thread, to put in force on another: a thread started inside [`confine`]
+/// has no scope of its own, so work handed to a worker takes this with it ([`Handoff::run`]). Roots
+/// set for the whole process ([`confine_process`]) need none.
+#[derive(Clone, Default)]
+pub(crate) struct Handoff(Option<Arc<AutomationRoots>>);
+
+impl Handoff {
+    /// Run `f` with the roots that were in force when this was made.
+    pub(crate) fn run<T>(&self, f: impl FnOnce() -> T) -> T {
+        confine(self.0.as_ref(), f)
+    }
+}
+
+/// The roots in force on this thread now, ready to hand to a worker.
+pub(crate) fn handoff() -> Handoff {
+    Handoff(current())
+}
+
 /// The roots in force in every thread outside [`confine`] and [`unconfined`].
 static PROCESS: OnceLock<Arc<AutomationRoots>> = OnceLock::new();
 
@@ -307,6 +325,17 @@ fn plain(path: PathBuf) -> PathBuf {
 /// May `path` be read here? Always, without roots in force.
 pub fn check_read(path: impl AsRef<Path>) -> Result<(), String> {
     current().map_or(Ok(()), |r| r.check(path, Access::Read))
+}
+
+/// Like [`check_read`], but judged by the process's roots when this thread is [`unconfined`] (the
+/// library the operator chose is open): a file that is not the library's own, such as a LUT or
+/// profile the library names elsewhere, is no more the operator's choice than any other path.
+pub(crate) fn check_read_process(path: impl AsRef<Path>) -> Result<(), String> {
+    let roots = match SCOPE.with(|s| s.borrow().clone()) {
+        Some(Scope::Confined(r)) => Some(r),
+        Some(Scope::Unconfined) | None => PROCESS.get().cloned(),
+    };
+    roots.map_or(Ok(()), |r| r.check(path, Access::Read))
 }
 
 /// May `path` be written here? Always, without roots in force.
@@ -407,6 +436,10 @@ impl AutomationRoots {
         self.reject_unsafe_prefix(path)?;
         let absolute =
             std::path::absolute(path).map_err(|e| Unresolved::Hidden(format!("automation path rejected: cannot resolve {}: {e}", path.display())))?;
+        // before any link on the way is followed: following one that leads to another computer contacts it
+        if self.link_leads_to_network(&absolute, MAX_LINK_HOPS) {
+            return Err(Unresolved::Named(format!("automation path rejected: network and device paths are not allowed: {}", path.display())));
+        }
         // The names below the nearest existing folder, last first.
         let mut missing: Vec<OsString> = vec![];
         let mut at = absolute.as_path();
@@ -458,15 +491,46 @@ impl AutomationRoots {
         }
         // (making a path absolute opens nothing; a relative path takes the working folder's prefix)
         let absolute = std::path::absolute(path).ok();
-        for prefix in [Some(path), absolute.as_deref()].into_iter().flatten().filter_map(unsafe_prefix) {
-            let shares = self.read.iter().chain(self.write.iter()).filter_map(|r| unsafe_prefix(&r.resolved));
-            if !prefix_allowed(prefix, shares) {
-                return Err(refused());
-            }
+        if [Some(path), absolute.as_deref()].into_iter().flatten().any(|p| self.prefix_is_refused(p)) {
+            return Err(refused());
         }
         Ok(())
     }
+
+    /// Does `path` start on another computer or a device that no root is on?
+    fn prefix_is_refused(&self, path: &Path) -> bool {
+        unsafe_prefix(path).is_some_and(|prefix| {
+            let shares = self.read.iter().chain(self.write.iter()).filter_map(|r| unsafe_prefix(&r.resolved));
+            !prefix_allowed(prefix, shares)
+        })
+    }
+
+    /// Is a link on the way to `path` one whose target is another computer or a device that no root
+    /// is on? Looked at without following it: following one (`canonicalize`) contacts the host, so
+    /// the targets are read from the links themselves, down a bounded chain of them. Windows only.
+    fn link_leads_to_network(&self, path: &Path, hops: u8) -> bool {
+        if !cfg!(windows) || hops == 0 {
+            return false;
+        }
+        let mut at = PathBuf::new();
+        for component in path.components() {
+            at.push(component);
+            if !matches!(component, Component::Normal(_)) || !std::fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink()) {
+                continue;
+            }
+            let Ok(target) = std::fs::read_link(&at) else { continue };
+            // a relative target is read from the folder the link stands in
+            let target = if target.is_relative() { at.parent().map_or(target.clone(), |folder| folder.join(&target)) } else { target };
+            if self.prefix_is_refused(&target) || self.link_leads_to_network(&target, hops - 1) {
+                return true;
+            }
+        }
+        false
+    }
 }
+
+/// How many links in a row are read for a target before the chain is let be.
+const MAX_LINK_HOPS: u8 = 8;
 
 /// The prefix of `path` when it is not a plain drive (`C:` or `\\?\C:`); only Windows paths have one.
 fn unsafe_prefix(path: &Path) -> Option<Prefix<'_>> {
@@ -898,6 +962,23 @@ mod tests {
             }
         }
         assert!(roots.check(s(base.join("in/a.jpg")), Access::Read).is_ok(), "a drive path still passes");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A link on the way that leads to another computer is refused from what it says, without being followed.
+    #[cfg(windows)]
+    #[test]
+    fn a_link_to_another_computer_is_refused_without_following_it() {
+        let (base, roots) = folders("link-network");
+        let link = base.join("in/remote");
+        if let Err(e) = std::os::windows::fs::symlink_dir(r"\\203.0.113.5\share", &link) {
+            lightcraft_testkit::skip!(System, "a symbolic link could not be made: {e}");
+            return;
+        }
+        for access in [Access::Read, Access::Write] {
+            let e = roots.check(s(link.join("x.jpg")), access).unwrap_err();
+            assert!(e.contains("network and device paths are not allowed") && !e.contains("cannot resolve"), "{access:?}: {e}");
+        }
         let _ = std::fs::remove_dir_all(base);
     }
 
