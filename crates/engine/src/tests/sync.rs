@@ -740,6 +740,7 @@ fn a_cancelled_scan_does_not_check_the_cached_probes_against_the_disk() {
     assert!(new.error.is_some(), "the cached probe was used after ✕: {new:?}");
 }
 
+/// A photo removed because its file is gone leaves its stack.
 #[test]
 fn removing_missing_photos_takes_them_out_of_their_stacks() {
     let dir = Scratch::new("remove-stacked");
