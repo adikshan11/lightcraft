@@ -242,6 +242,11 @@ thread_local! {
 pub(crate) struct Handoff(Option<Arc<AutomationRoots>>);
 
 impl Handoff {
+    /// Which roots these are: the same number for the same roots, and none for no roots.
+    pub(crate) fn id(&self) -> usize {
+        self.0.as_ref().map_or(0, |r| Arc::as_ptr(r) as usize)
+    }
+
     /// Run `f` with the roots that were in force when this was made.
     pub(crate) fn run<T>(&self, f: impl FnOnce() -> T) -> T {
         confine(self.0.as_ref(), f)
@@ -514,9 +519,10 @@ impl AutomationRoots {
 
     /// Is a link on the way to `path` one whose target is another computer or a device that no root
     /// is on? Looked at without following it: following one (`canonicalize`) contacts the host, so
-    /// the targets are read from the links themselves, down a bounded chain of them. Windows only.
+    /// the targets are read from the links themselves, down a bounded chain of them. A chain longer
+    /// than that is refused, not trusted: its end is out of sight. Windows only.
     fn link_leads_to_network(&self, path: &Path, hops: u8) -> bool {
-        if !cfg!(windows) || hops == 0 {
+        if !cfg!(windows) {
             return false;
         }
         let mut at = PathBuf::new();
@@ -524,6 +530,9 @@ impl AutomationRoots {
             at.push(component);
             if !matches!(component, Component::Normal(_)) || !std::fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink()) {
                 continue;
+            }
+            if hops == 0 {
+                return true;
             }
             let Ok(target) = std::fs::read_link(&at) else { continue };
             // a relative target is read from the folder the link stands in
@@ -536,7 +545,7 @@ impl AutomationRoots {
     }
 }
 
-/// How many links in a row are read for a target before the chain is let be.
+/// How many links in a row are read for a target; a longer chain is refused.
 const MAX_LINK_HOPS: u8 = 8;
 
 /// The prefix of `path` when it is not a plain drive (`C:` or `\\?\C:`); only Windows paths have one.
@@ -1004,6 +1013,27 @@ mod tests {
         });
         assert!(with, "the handed roots refuse an outside path");
         assert!(!without, "a thread started inside the scope has no roots of its own");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A chain of links too long to read to its end is refused, though every link in it is local.
+    #[cfg(windows)]
+    #[test]
+    fn a_chain_of_links_longer_than_the_budget_is_refused() {
+        let (base, roots) = folders("link-chain");
+        let real = base.join("in/real");
+        std::fs::create_dir_all(&real).unwrap();
+        let mut last = real;
+        for i in 1..=MAX_LINK_HOPS + 2 {
+            let link = base.join(format!("in/hop{i}"));
+            if let Err(e) = std::os::windows::fs::symlink_dir(&last, &link) {
+                lightcraft_testkit::skip!(System, "a symbolic link could not be made: {e}");
+                return;
+            }
+            last = link;
+        }
+        assert!(roots.check(s(last.join("x.jpg")), Access::Read).is_err(), "a chain past the budget is refused");
+        assert!(roots.check(s(base.join("in/hop1/x.jpg")), Access::Read).is_ok(), "a short one is followed");
         let _ = std::fs::remove_dir_all(base);
     }
 

@@ -458,9 +458,12 @@ fn run_all(jobs: Vec<PhotoJobs>, state: &PreviewBuild, task: Option<&TaskGuard>,
     };
     #[cfg(not(target_arch = "wasm32"))]
     std::thread::scope(|sc| {
+        // the lanes have no roots of their own: they read under the ones in force here
+        let roots = crate::file_access::handoff();
         for k in 1..lanes.max(1) {
+            let roots = &roots;
             // a lane that can't start leaves its photos to the others (and to this thread)
-            if std::thread::Builder::new().name(format!("previews-{k}")).spawn_scoped(sc, work).is_err() {
+            if std::thread::Builder::new().name(format!("previews-{k}")).spawn_scoped(sc, move || roots.run(work)).is_err() {
                 break;
             }
         }
@@ -480,6 +483,7 @@ pub fn standard_edge(s: &Session) -> usize {
     STANDARD_EDGE.max(s.loupe_edge.min(8192))
 }
 
+/// `library.buildPreviews`: build the previews the parameters ask for, on a worker thread of its own.
 fn build(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "library.buildPreviews";
     // tests: this invocation's gate, consumed here so an early error cannot attach it to a later build
@@ -545,15 +549,18 @@ fn build(s: &mut Session, p: &Value) -> Result<Value> {
     {
         // the row stays while the worker runs (it is dropped with the closure, however that ends)
         let st = state.clone();
+        // the worker has no roots of its own: it reads under the ones in force where the build was asked for
+        let roots = crate::file_access::handoff();
         #[cfg(test)]
         let started = if test_gate::take_fail_spawn() {
             drop(task);
             Err(std::io::Error::other("no thread (test)"))
         } else {
-            std::thread::Builder::new().name("lc-build-previews".into()).spawn(move || run_all(jobs, &st, task.as_ref(), lanes, force))
+            std::thread::Builder::new().name("lc-build-previews".into()).spawn(move || roots.run(|| run_all(jobs, &st, task.as_ref(), lanes, force)))
         };
         #[cfg(not(test))]
-        let started = std::thread::Builder::new().name("lc-build-previews".into()).spawn(move || run_all(jobs, &st, task.as_ref(), lanes, force));
+        let started =
+            std::thread::Builder::new().name("lc-build-previews".into()).spawn(move || roots.run(|| run_all(jobs, &st, task.as_ref(), lanes, force)));
         if let Err(e) = started {
             // never started: not left "running", which would hold every later build back, and the
             // build it was to replace carries on
@@ -772,6 +779,9 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
             }
             st.finished.store(true, Ordering::Relaxed);
         };
+        // the worker has no roots of its own: it reads under the ones in force where the build was asked for
+        let roots = crate::file_access::handoff();
+        let work = move || roots.run(work);
         #[cfg(test)]
         let started = if test_gate::take_fail_spawn() {
             drop(work);

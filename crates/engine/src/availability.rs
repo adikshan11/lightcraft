@@ -61,6 +61,8 @@ struct State {
     scopes: HashMap<String, crate::file_access::Handoff>,
     /// The roots in force where the sweep under way was started.
     sweep_scope: crate::file_access::Handoff,
+    /// Whose roots the answers in `known` were found under ([`crate::file_access::Handoff::id`]).
+    known_for: usize,
     /// Bumped when the sweep under way is dropped for another one ([`Availability::restart_sweeps`]).
     sweep_epoch: u64,
     /// Whether file work a sweep gives way to is going on.
@@ -135,12 +137,22 @@ impl Availability {
         let Some(wake) = &self.background else {
             return Some((self.probe)(path));
         };
+        let scope = crate::file_access::handoff();
         let mut st = lock(&self.state);
+        // an answer found under one set of roots is not another's: forget them when the asker changes
+        if st.known_for != scope.id() {
+            st.known.clear();
+            st.gone.clear();
+            st.queued.clear();
+            st.queue.clear();
+            st.scopes.clear();
+            st.known_for = scope.id();
+        }
         let now = std::time::Instant::now();
         let cached = st.known.get(path).copied();
         if cached.is_none_or(|(_, at)| now.saturating_duration_since(at) >= RECHECK) && !st.queued.contains(path) {
             st.queued.insert(path.to_string());
-            st.scopes.insert(path.to_string(), crate::file_access::handoff());
+            st.scopes.insert(path.to_string(), scope);
             st.queue.push_back(path.to_string());
             self.start(st, wake);
         }
@@ -305,14 +317,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("lc-avail-roots-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let roots = AutomationRoots::new(Some(&dir), Some(&dir)).unwrap().unwrap();
-        let (asked, confined) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
-        let (a2, c2) = (asked.clone(), confined.clone());
+        let (asked, confined, done) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let (a2, c2, d2) = (asked.clone(), confined.clone(), done.clone());
         let mut a = Availability::default();
         a.set_probe(Arc::new(move |_| {
             a2.fetch_add(1, Ordering::Relaxed);
             if current().is_some() {
                 c2.fetch_add(1, Ordering::Relaxed);
             }
+            d2.fetch_add(1, Ordering::Relaxed);
             true
         }));
         a.run_in_background(Arc::new(|| {}));
@@ -321,13 +334,36 @@ mod tests {
             assert!(a.sweep(vec!["/in/the/sweep.jpg".into()]));
         });
         for _ in 0..200 {
-            if asked.load(Ordering::Relaxed) >= 2 {
+            if done.load(Ordering::Relaxed) >= 2 {
                 break;
             }
             std::thread::sleep(Duration::from_millis(25));
         }
         assert_eq!(asked.load(Ordering::Relaxed), 2, "the asked path and the sweep's");
         assert_eq!(confined.load(Ordering::Relaxed), 2, "both under the roots that were in force where they were asked");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Answers found under one set of roots are not handed to a thread that asks under others.
+    #[test]
+    fn an_answer_is_not_handed_to_an_asker_with_other_roots() {
+        use crate::file_access::{AutomationRoots, confine};
+        let dir = std::env::temp_dir().join(format!("lc-avail-scopes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let roots = AutomationRoots::new(Some(&dir), Some(&dir)).unwrap().unwrap();
+        let mut a = Availability::default();
+        a.set_probe(Arc::new(|_| true));
+        a.run_in_background(Arc::new(|| {}));
+        let mut answer = None;
+        for _ in 0..200 {
+            answer = confine(Some(&roots), || a.exists("/a/file.jpg"));
+            if answer.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert_eq!(answer, Some(true), "found under the roots");
+        assert_eq!(a.exists("/a/file.jpg"), None, "not the answer of a thread that asks with no roots");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
