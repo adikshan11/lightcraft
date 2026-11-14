@@ -35,7 +35,8 @@ pub fn register_all(s: &Session, profiles: Option<&Path>) {
         let allowed = if super::dcp_profiles::library_owned(profiles, file) {
             crate::file_access::reject_other_names(file).is_ok()
         } else {
-            crate::file_access::check_read(file).is_ok()
+            // (the library may be opening unconfined: a file elsewhere is still judged by the process's roots)
+            crate::file_access::check_read_process(file).is_ok()
         };
         let lut = allowed.then(|| std::fs::read_to_string(&p.file).ok().and_then(|t| lightcraft_pipeline::lut::Lut3d::parse_cube(&t).ok())).flatten();
         match lut {

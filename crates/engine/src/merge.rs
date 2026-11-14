@@ -116,12 +116,15 @@ fn err(e: impl std::fmt::Display) -> String {
 }
 
 impl MergeJob {
+    /// Read and decode every source, in parallel for a preview, each read under the roots in force here.
     fn load(&self, orient: bool, progress: &ProgressFn, span: (f32, f32)) -> std::result::Result<Vec<Frame>, String> {
         use rayon::prelude::*;
         let done = std::sync::atomic::AtomicUsize::new(0);
         let n = self.sources.len();
+        // the preview's workers have no roots of their own: they read under the ones in force here
+        let roots = crate::file_access::handoff();
         let one = |(_, path): &(PhotoId, String)| {
-            let bytes = (self.read)(path)?;
+            let bytes = roots.run(|| (self.read)(path))?;
             // a raw without colour matrices of its own starts from the colour it has when opened alone (#965)
             let f = lightcraft_merge::load_frame_with(&bytes, self.preview, orient, &crate::camera_preview::starting_colour_tags)
                 .map_err(|e| format!("{path}: {e}"));

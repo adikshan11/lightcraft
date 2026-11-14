@@ -218,7 +218,8 @@ pub(super) fn watermark_coverage(
     }
 }
 
-/// A watermark graphic, decoded once per file (and again when the file changes).
+/// A watermark graphic, decoded once per file (and again when the file changes, or when read under
+/// automation roots, which never take a decoded copy another read made).
 pub(crate) fn watermark_logo(path: &str) -> Option<std::sync::Arc<Rgba8>> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -227,7 +228,10 @@ pub(crate) fn watermark_logo(path: &str) -> Option<std::sync::Arc<Rgba8>> {
     let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
     let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let map = c.get_or_insert_with(HashMap::new);
-    if let Some((m, img)) = map.get(path)
+    // The cache is the whole process's and its key is the path text and the time: a hit is not proof that
+    // this path leads where the one that filled it did, so a read under roots decodes the file itself.
+    if crate::file_access::current().is_none()
+        && let Some((m, img)) = map.get(path)
         && *m == modified
     {
         return Some(img.clone());

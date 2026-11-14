@@ -89,7 +89,8 @@ fn read_allowed(dir: Option<&Path>, file: &Path) -> std::io::Result<Vec<u8>> {
     if library_owned(dir, file) {
         crate::file_access::reject_other_names(file).map_err(std::io::Error::other)?;
     } else {
-        crate::file_access::check_read(file).map_err(std::io::Error::other)?;
+        // (the library may be opening unconfined: a file elsewhere is still judged by the process's roots)
+        crate::file_access::check_read_process(file).map_err(std::io::Error::other)?;
     }
     lightcraft_raw::dcp::read_dcp(file)
 }

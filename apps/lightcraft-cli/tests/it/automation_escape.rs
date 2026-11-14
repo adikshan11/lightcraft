@@ -29,9 +29,11 @@ fn png(path: &Path) {
     std::fs::write(path, lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &Default::default()).unwrap()).unwrap();
 }
 
-/// Every file and folder under `dir` with its contents; links are listed, not followed.
+/// Every file and folder under `dir` with its contents; links are listed, not followed. A folder that is
+/// gone, because a command renamed it, lists nothing: that shows as a change, not a panic.
 fn snapshot(dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
-    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
         let path = entry.path();
         let kind = entry.file_type().unwrap();
         if kind.is_dir() {
