@@ -79,6 +79,18 @@ fn refused(server: &mut Server, name: &str, args: Value, why: &str) {
     assert!(!text.contains(SECRET), "{name}: {text} leaked secret!");
 }
 
+/// A client's `initialize` reply says which roots are set, never where they are: the folders are
+/// for the operator's log.
+#[test]
+fn initialize_does_not_name_the_roots() {
+    let (mut server, base) = confined("initialize", true, true);
+    let line = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}}).to_string();
+    let reply = server.handle_line(&line).unwrap();
+    assert!(reply.contains("read root set, write root set"), "{reply}");
+    assert!(!reply.contains("lc-mcp-roots-initialize"), "{reply}");
+    let _ = std::fs::remove_dir_all(base);
+}
+
 /// A preset's watermark is held to the roots like one in the call: the export is refused, not
 /// written without it.
 #[test]
