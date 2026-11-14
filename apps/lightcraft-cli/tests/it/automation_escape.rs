@@ -293,10 +293,16 @@ fn reaches_path_check(id: &str, params: &Value, base: &Path, target: &str, read:
     }
 }
 
-/// Replies may name the path they refuse, never what's in that folder or file.
-fn leaks(reply: &Value) -> bool {
+/// Replies may name the path they refuse (`target`, as it was asked), never what's in that folder or file,
+/// and not the name of anything else out there.
+fn leaks(reply: &Value, target: &str) -> bool {
     let reply = reply.to_string();
-    reply.contains(&format!("{SECRET}2")) || reply.contains(&format!("\\\"secret\\\": \\\"{SECRET}")) || reply.contains(&format!("xmpmeta>{SECRET}"))
+    let asked = serde_json::to_string(target).unwrap_or_default();
+    let rest = reply.replace(asked.trim_matches('"'), "");
+    rest.contains(SECRET)
+        || reply.contains(&format!("{SECRET}2"))
+        || reply.contains(&format!("\\\"secret\\\": \\\"{SECRET}"))
+        || reply.contains(&format!("xmpmeta>{SECRET}"))
 }
 
 /// Every command and tool, once per way out. What crossed the roots, in words.
@@ -333,7 +339,7 @@ fn walk(tag: &str, read: bool, write: bool) -> Vec<String> {
         for id in &ids {
             let params = path_params(names, target);
             let r = mcp.tool("run_command", json!({"command": id, "params": params}));
-            if leaks(&r) {
+            if leaks(&r, target) {
                 found.push(format!("{id} {target}: {r}"));
             }
             // A command that reaches the path check has to be refused by the roots, so a missing
@@ -362,7 +368,7 @@ fn walk(tag: &str, read: bool, write: bool) -> Vec<String> {
             }
             if !args.is_empty() {
                 let r = mcp.tool(name, Value::Object(args));
-                if leaks(&r) {
+                if leaks(&r, target) {
                     found.push(format!("{name} {target}: {r}"));
                 }
             }

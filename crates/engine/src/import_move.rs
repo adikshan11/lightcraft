@@ -125,7 +125,8 @@ pub(crate) fn sidecars_of(src: &Path) -> Vec<(PathBuf, bool)> {
         .filter_map(|e| {
             let n = e.file_name().to_string_lossy().to_string();
             let (base, ext) = n.rsplit_once('.')?;
-            if !ext.eq_ignore_ascii_case("xmp") || !crate::file_access::may_probe(e.path()) || !e.path().is_file() {
+            // (a name the roots refuse is kept, for the preflight to refuse, and is not asked about)
+            if !ext.eq_ignore_ascii_case("xmp") || (crate::file_access::may_probe(e.path()) && !e.path().is_file()) {
                 return None;
             }
             // `IMG_1.cr3.xmp` names `IMG_1.CR3` too: some apps lower-case the photo's extension

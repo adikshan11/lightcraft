@@ -71,6 +71,21 @@ struct State {
     gone_generation: u64,
 }
 
+impl State {
+    /// Note whose roots the next answers are found under. An answer found under one set of roots is not
+    /// another's, so the cache and the work waiting for it are forgotten when the asker changes.
+    fn adopt(&mut self, scope: &crate::file_access::Handoff) {
+        if self.known_for != scope.id() {
+            self.known.clear();
+            self.gone.clear();
+            self.queued.clear();
+            self.queue.clear();
+            self.scopes.clear();
+            self.known_for = scope.id();
+        }
+    }
+}
+
 fn lock(m: &Mutex<State>) -> MutexGuard<'_, State> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -139,15 +154,7 @@ impl Availability {
         };
         let scope = crate::file_access::handoff();
         let mut st = lock(&self.state);
-        // an answer found under one set of roots is not another's: forget them when the asker changes
-        if st.known_for != scope.id() {
-            st.known.clear();
-            st.gone.clear();
-            st.queued.clear();
-            st.queue.clear();
-            st.scopes.clear();
-            st.known_for = scope.id();
-        }
+        st.adopt(&scope);
         let now = std::time::Instant::now();
         let cached = st.known.get(path).copied();
         if cached.is_none_or(|(_, at)| now.saturating_duration_since(at) >= RECHECK) && !st.queued.contains(path) {
@@ -191,7 +198,9 @@ impl Availability {
             return false;
         }
         st.sweep = paths.into();
-        st.sweep_scope = crate::file_access::handoff();
+        let scope = crate::file_access::handoff();
+        st.adopt(&scope);
+        st.sweep_scope = scope;
         self.start(st, wake);
         true
     }
@@ -276,19 +285,25 @@ impl Availability {
                     }
                 };
                 // the worker has no roots of its own: the one that asked decides what may be looked at
+                let asker = scope.id();
                 let ok = scope.run(|| probe(&path));
                 let wakes = {
                     let mut st = lock(&state);
                     if asked {
                         st.queued.remove(&path);
                     }
-                    let gone_changed = if ok { st.gone.remove(&path) } else { st.gone.insert(path.clone()) };
-                    let prev = st.known.insert(path, (ok, std::time::Instant::now()));
-                    let changed = prev.map(|p| p.0) != Some(ok);
-                    if gone_changed {
-                        st.gone_generation += 1;
+                    if st.known_for != asker {
+                        // asked under other roots than the cache is for now: the answer is not kept
+                        false
+                    } else {
+                        let gone_changed = if ok { st.gone.remove(&path) } else { st.gone.insert(path.clone()) };
+                        let prev = st.known.insert(path, (ok, std::time::Instant::now()));
+                        let changed = prev.map(|p| p.0) != Some(ok);
+                        if gone_changed {
+                            st.gone_generation += 1;
+                        }
+                        (asked && changed) || gone_changed
                     }
-                    (asked && changed) || gone_changed
                 };
                 if wakes {
                     wake();
