@@ -660,6 +660,8 @@ pub struct SyncWork {
     missing: Vec<FolderPhoto>,
     /// (photo, its file, how its sidecar is named)
     sidecars: Vec<(PhotoId, String, SidecarLookup, crate::crs::Target)>,
+    /// The roots in force where the synchronize was started: the thread that runs the work has none of its own.
+    scope: crate::file_access::Handoff,
 }
 
 /// The catalog half of a synchronize (see [`SyncJob`]).
@@ -724,6 +726,7 @@ impl SyncJob {
             moved: if choice.relink_moved { moved } else { Vec::new() },
             missing: if choice.remove_missing { missing } else { Vec::new() },
             sidecars,
+            scope: crate::file_access::handoff(),
         };
         let commit = SyncCommit {
             opts,
@@ -742,10 +745,16 @@ impl SyncWork {
     /// Do the work, handing each step to `send` (`false`: nobody takes them any more — stop).
     /// Stops before the next piece once `progress.files.cancel` is set; what was handed over
     /// stays handed over.
-    pub fn run(self, progress: &SyncProgress, mut send: impl FnMut(SyncStep) -> bool) {
+    pub fn run(self, progress: &SyncProgress, send: impl FnMut(SyncStep) -> bool) {
+        let scope = self.scope.clone();
+        scope.run(move || self.run_in_scope(progress, send));
+    }
+
+    /// [`SyncWork::run`], on a thread where the roots of whoever started the synchronize are in force.
+    fn run_in_scope(self, progress: &SyncProgress, mut send: impl FnMut(SyncStep) -> bool) {
         use std::sync::atomic::Ordering::Relaxed;
         let cancel = &progress.files.cancel;
-        let SyncWork { import, moved, missing, sidecars } = self;
+        let SyncWork { import, moved, missing, sidecars, scope: _ } = self;
         let pieces = import.as_ref().map_or(0, |(_, f)| f.len()) + moved.len() + missing.len() + sidecars.len();
         progress.to_check.store(pieces, Relaxed);
         progress.checked.store(0, Relaxed);

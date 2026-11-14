@@ -965,6 +965,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
+    /// What is handed to another thread puts the roots in force there; a thread that is handed nothing has none.
+    #[test]
+    fn a_handoff_puts_the_roots_in_force_on_another_thread() {
+        let (base, roots) = folders("handoff");
+        let hand = confine(Some(&roots), handoff);
+        let outside = s(base.join("outside/secret.jpg"));
+        let (o1, o2) = (outside.clone(), outside);
+        let (with, without) = std::thread::scope(|sc| {
+            let with = sc.spawn(|| hand.run(|| check_read(&o1).is_err()));
+            let without = sc.spawn(|| check_read(&o2).is_err());
+            (with.join().unwrap(), without.join().unwrap())
+        });
+        assert!(with, "the handed roots refuse an outside path");
+        assert!(!without, "a thread started inside the scope has no roots of its own");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
     /// A link on the way that leads to another computer is refused from what it says, without being followed.
     #[cfg(windows)]
     #[test]

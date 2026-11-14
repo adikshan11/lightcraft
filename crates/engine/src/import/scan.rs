@@ -164,7 +164,8 @@ pub fn browse_files(input: &ScanInput, root: &str, subfolders: bool) -> std::io:
         }
         let f = entry.path();
         // (a link out of the automation roots is passed over, as the walk does)
-        if f.is_file() && is_supported(&f) && crate::file_access::check_read(&f).is_ok() {
+        // (the check first: a link to another computer is asked about by `is_file`, which would contact it)
+        if is_supported(&f) && crate::file_access::check_read(&f).is_ok() && f.is_file() {
             v.push(f.to_string_lossy().to_string());
         }
     }

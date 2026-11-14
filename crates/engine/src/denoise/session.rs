@@ -267,8 +267,10 @@ impl Session {
             let outcome: Arc<Mutex<Option<Outcome>>> = Arc::new(Mutex::new(None));
             let (key, product) = (spec.key.clone(), spec.product.clone());
             let (worker_progress, worker_outcome) = (progress.clone(), outcome.clone());
+            // the job's thread has no roots of its own: it reads the original under the ones in force here
+            let roots = crate::file_access::handoff();
             let started = std::thread::Builder::new().name("denoise".into()).stack_size(STACK).spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| make_product(&spec, Some(&worker_progress))));
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| roots.run(|| make_product(&spec, Some(&worker_progress)))));
                 let o = match result {
                     Ok(Ok(_)) => Outcome::Done,
                     Ok(Err(MakeError::Cancelled)) => Outcome::Cancelled,
@@ -509,7 +511,8 @@ impl Session {
         };
         let label = name.clone();
         let spec = job.clone();
-        let make: MakeProduct = Arc::new(move || match make_product(&spec, None) {
+        let roots = crate::file_access::handoff();
+        let make: MakeProduct = Arc::new(move || match roots.run(|| make_product(&spec, None)) {
             Ok(_) => Ok(true),
             Err(MakeError::Unsupported(_)) => Ok(false),
             Err(MakeError::Failed(why)) => Err(format!("{label}: could not denoise: {why}")),
