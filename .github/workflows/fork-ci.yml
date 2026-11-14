@@ -32,6 +32,7 @@ jobs:
         run: cargo fmt --all -- --check
       # The cfg(windows) and cfg(macos) code only goes through clippy on its own platform.
       - name: Clippy on every target of the crates this pull request touches
+        if: always()
         shell: bash
         run: cargo clippy --locked -p lightcraft-catalog -p lightcraft-engine -p lightcraft-mcp -p lightcraft-cli --all-targets --keep-going -- -D warnings
       - name: Engine, MCP and CLI tests
