@@ -483,6 +483,7 @@ pub fn standard_edge(s: &Session) -> usize {
     STANDARD_EDGE.max(s.loupe_edge.min(8192))
 }
 
+/// `library.buildPreviews`: build the previews the parameters ask for, on a worker thread of its own.
 fn build(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "library.buildPreviews";
     // tests: this invocation's gate, consumed here so an early error cannot attach it to a later build
