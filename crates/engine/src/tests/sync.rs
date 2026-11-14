@@ -757,3 +757,36 @@ fn removing_missing_photos_takes_them_out_of_their_stacks() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(s.catalog.stack_of(b).is_some(), "one undo step puts b back in its stack");
 }
+
+/// The work runs on a thread that has no roots of its own: it runs under the roots in force where the
+/// synchronize was started, and each step it hands over is made under them.
+#[test]
+fn the_work_runs_under_the_roots_of_whoever_started_it() {
+    use crate::file_access::{AutomationRoots, confine, current};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = Scratch::new("work-roots");
+    let mut s = library(&dir);
+    std::fs::remove_file(dir.path("trip/day1/b.png")).unwrap();
+    let trip = dir.path("trip");
+    let roots = AutomationRoots::new(Some(Path::new(&trip)), Some(Path::new(&trip))).unwrap().unwrap();
+    let choice = crate::sync::SyncChoice { remove_missing: true, ..Default::default() };
+    let changes = confine(Some(&roots), || crate::sync::scan(&mut s, &trip, false)).unwrap();
+    let (work, _commit) = confine(Some(&roots), || crate::sync::SyncJob::start(&mut s, changes, choice)).unwrap();
+    let (steps, bare) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (steps2, bare2) = (steps.clone(), bare.clone());
+    let progress = crate::sync::SyncProgress::default();
+    std::thread::spawn(move || {
+        work.run(&progress, |_| {
+            steps2.fetch_add(1, Ordering::Relaxed);
+            if current().is_none() {
+                bare2.fetch_add(1, Ordering::Relaxed);
+            }
+            true
+        })
+    })
+    .join()
+    .unwrap();
+    assert!(steps.load(Ordering::Relaxed) >= 1, "the work handed over a step");
+    assert_eq!(bare.load(Ordering::Relaxed), 0, "a step was made with no roots in force");
+}
