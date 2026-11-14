@@ -73,7 +73,7 @@ pub fn sidecar_path(original: &str, naming: SidecarNaming) -> PathBuf {
 /// accepting `.XMP` and `.Xmp`, and a full name whose photo extension differs in case, such as
 /// `IMG_1.cr3.xmp` beside `IMG_1.CR3`, which a case-sensitive file system would otherwise miss).
 pub fn find_sidecar(original: &str, naming: SidecarNaming) -> Option<PathBuf> {
-    sidecar_candidates(original, naming).find(|p| p.is_file())
+    sidecar_candidates(original, naming).find(|p| crate::file_access::may_probe(p) && p.is_file())
 }
 
 /// Where to look for a catalogued photo's sidecar: how the library names it, and whether the photo
@@ -92,7 +92,10 @@ impl SidecarLookup {
     /// [`sidecar_candidates`], without the shared stem sidecar when the photo does not own it.
     pub(crate) fn candidates(self, original: &str) -> impl Iterator<Item = PathBuf> {
         let shared = (!self.owns_stem).then(|| xmp_cases(sidecar_path(original, SidecarNaming::Stem)));
-        sidecar_candidates(original, self.naming).filter(move |p| shared.as_ref().is_none_or(|shared| !shared.contains(p)))
+        // (a name outside the roots is never asked about: on Windows a link to a share would be contacted)
+        sidecar_candidates(original, self.naming)
+            .filter(move |p| shared.as_ref().is_none_or(|shared| !shared.contains(p)))
+            .filter(|p| crate::file_access::may_probe(p))
     }
 
     /// [`find_sidecar`], except that a photo that does not own its stem sidecar never reads it.

@@ -817,3 +817,22 @@ fn a_confined_move_of_two_photos_with_one_sidecar_goes_through() {
     assert!(library.join("a.png").exists() && library.join("a.jpg").exists() && library.join("a.xmp").exists());
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A name a sidecar could have is a candidate only inside the roots: outside them it is never asked
+/// about, which on Windows would contact the host a link there leads to.
+#[test]
+fn a_sidecar_name_outside_the_roots_is_not_a_candidate() {
+    use crate::file_access::{AutomationRoots, confine};
+    use crate::sidecar::{SidecarLookup, SidecarNaming};
+    let base = temp_dir("sidecar-candidates");
+    let (root, outside) = (base.join("root"), base.join("outside"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+    let lookup = SidecarLookup { naming: SidecarNaming::Full, owns_stem: true };
+    let count = |dir: &Path| lookup.candidates(&dir.join("a.png").to_string_lossy()).count();
+    assert!(confine(Some(&roots), || count(&root)) > 0, "inside the roots the names are candidates");
+    assert_eq!(confine(Some(&roots), || count(&outside)), 0, "outside them none is");
+    assert!(count(&outside) > 0, "without roots every name is");
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -208,6 +208,8 @@ fn start(s: &mut Session, list: Vec<(PhotoId, String)>, pace: Pace) -> std::resu
     let paths: HashMap<PhotoId, String> = list.iter().cloned().collect();
     let total = list.len() as u64;
     let (worker_cancel, worker_pace) = (cancel.clone(), pace.clone());
+    // the worker has no roots of its own: it reads under the ones in force where the scan was asked for
+    let roots = crate::file_access::handoff();
     std::thread::Builder::new()
         .name("focus-points".into())
         .spawn(move || {
@@ -225,7 +227,7 @@ fn start(s: &mut Session, list: Vec<(PhotoId, String)>, pace: Pace) -> std::resu
                     std::thread::sleep(LIGHT_REST);
                 }
                 // a decoder bug in one file is that file's problem, not the job's end
-                let outcome = match crate::guard::catch("reading a focus point", || read_focus(&path)) {
+                let outcome = match crate::guard::catch("reading a focus point", || roots.run(|| read_focus(&path))) {
                     Ok(Ok(r)) => Outcome::Read { id, focus: r.focus, bytes: r.bytes_read },
                     Ok(Err(e)) => {
                         log::debug!("focus point: {e}");

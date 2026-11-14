@@ -260,11 +260,13 @@ const REFUSES_EARLIER: &[&str] = &[
 
 /// Whether `name` (`job.color.profile.path`) is present in `params`.
 fn param_is_set(params: &Value, name: &str) -> bool {
+    // a name ending in `[0]` is the first cell of each row of a list: set when the first row has one
+    let (name, first_cell) = name.strip_suffix("[0]").map_or((name, false), |n| (n, true));
     let mut at = Some(params);
     for part in name.split('.') {
         at = at.and_then(|v| v.get(part));
     }
-    at.is_some()
+    if first_cell { at.and_then(|rows| rows.get(0)).and_then(|row| row.get(0)).is_some() } else { at.is_some() }
 }
 
 /// A read the roots allow. `in/new.png` sits in the read root. `outside/back.png` and
