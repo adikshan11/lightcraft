@@ -151,9 +151,10 @@ pub(crate) fn place(src: &Path, dir: &Path, name: &str) -> Result<Placed, String
     crate::file_access::check_write(src)?;
     crate::file_access::check_write(dir)?;
     // before anything is placed, so a refusal leaves nothing behind
+    // (the place only: a sidecar a sibling's move placed has two names, and is judged with its pair below)
     for (sc, _) in sidecars_of(src) {
-        crate::file_access::check_read(&sc)?;
-        crate::file_access::check_write(&sc)?;
+        crate::file_access::check_place(&sc, crate::file_access::Access::Read)?;
+        crate::file_access::check_place(&sc, crate::file_access::Access::Write)?;
     }
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let (stem, ext) = match name.rsplit_once('.') {
@@ -179,16 +180,25 @@ pub(crate) fn place(src: &Path, dir: &Path, name: &str) -> Result<Placed, String
         let sc_dst =
             if stem_named { placed.dst.with_extension(&sc_ext) } else { PathBuf::from(format!("{}.{sc_ext}", placed.dst.to_string_lossy())) };
         let r = if sc_dst.exists() {
-            // one already there is compared, so it has to be readable: a link out of the roots isn't
-            match crate::file_access::check_read(&sc_dst)
-                .and_then(|()| same_bytes(&sc, &sc_dst).map_err(|e| format!("{}: {e} (the original is kept)", sc_dst.display())))
-            {
-                Ok(true) => Ok(false),
-                Ok(false) => Err(format!("a different sidecar is already at {} (the original is kept)", sc_dst.display())),
-                Err(e) => Err(e),
+            if lightcraft_catalog::safe_file::same_file_strict(&sc, &sc_dst).unwrap_or(false) {
+                // A sibling's move placed it: two names of one file, which is no third name. Nothing to compare.
+                crate::file_access::check_write_pair(&sc, &sc_dst).map(|()| false)
+            } else {
+                // one already there is compared, so it has to be readable: a link out of the roots isn't
+                match crate::file_access::check_read(&sc)
+                    .and_then(|()| crate::file_access::check_read(&sc_dst))
+                    .and_then(|()| same_bytes(&sc, &sc_dst).map_err(|e| format!("{}: {e} (the original is kept)", sc_dst.display())))
+                {
+                    Ok(true) => Ok(false),
+                    Ok(false) => Err(format!("a different sidecar is already at {} (the original is kept)", sc_dst.display())),
+                    Err(e) => Err(e),
+                }
             }
         } else {
-            link_or_copy(&sc, &sc_dst).map(|()| true).map_err(|e| format!("move {}: {e} (the original is kept)", sc.display()))
+            // a new name for it, so it has to be an ordinary file with one name
+            crate::file_access::check_read(&sc)
+                .and_then(|()| link_or_copy(&sc, &sc_dst).map_err(|e| format!("move {}: {e} (the original is kept)", sc.display())))
+                .map(|()| true)
         };
         match r {
             Ok(created) => placed.sidecars.push(PlacedSidecar { src: sc, dst: sc_dst, created, stem: stem_named }),

@@ -3576,3 +3576,28 @@ fn browsing_stays_inside_the_automation_roots() {
     assert_eq!(names(crate::import::browse_files(&input, &inside, false).unwrap()), ["a.png", "link.png"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The watched-folder listing judges each entry: a link in the folder that leads out of the roots, to a
+/// file that is there or not, is left out, so the listing says nothing of what is outside.
+#[cfg(unix)]
+#[test]
+fn the_auto_import_listing_drops_a_link_that_leads_out_of_the_roots() {
+    use crate::cmd::library::list_auto_import_folder;
+    use crate::file_access::{AutomationRoots, confine};
+    let base = std::env::temp_dir().join(format!("lc-auto-list-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (watch, outside) = (base.join("root/watch"), base.join("outside"));
+    std::fs::create_dir_all(&watch).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(watch.join("a.png"), b"inside").unwrap();
+    std::fs::write(outside.join("secret.png"), b"outside").unwrap();
+    std::os::unix::fs::symlink(outside.join("secret.png"), watch.join("there.png")).unwrap();
+    std::os::unix::fs::symlink(outside.join("nothing.png"), watch.join("gone.png")).unwrap();
+    let roots = AutomationRoots::new(Some(&base.join("root")), Some(&base.join("root"))).unwrap().unwrap();
+    let listed = confine(Some(&roots), || list_auto_import_folder(&watch.to_string_lossy())).unwrap();
+    let names: Vec<_> = listed.iter().map(|(p, _)| std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string()).collect();
+    assert_eq!(names, ["a.png"], "{listed:?}");
+    let all = list_auto_import_folder(&watch.to_string_lossy()).unwrap();
+    assert!(all.iter().any(|(p, _)| p.ends_with("there.png")), "without roots the link is listed as before: {all:?}");
+    let _ = std::fs::remove_dir_all(&base);
+}

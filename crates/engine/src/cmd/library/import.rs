@@ -10,6 +10,8 @@ pub fn list_auto_import_folder(folder: &str) -> std::result::Result<Vec<(String,
         .flatten()
         .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
         .filter_map(|e| {
+            // an entry is a path of its own: a link in the folder may lead out of the roots
+            crate::file_access::check_read(e.path()).ok()?;
             let m = std::fs::metadata(e.path()).ok()?;
             m.is_file().then(|| (e.path().to_string_lossy().to_string(), m.len()))
         })

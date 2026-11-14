@@ -32,15 +32,16 @@ fn profiles_dir(s: &Session) -> Option<PathBuf> {
 pub fn register_all(s: &Session, profiles: Option<&Path>) {
     for p in &s.lut_profiles {
         let file = Path::new(&p.file);
-        if super::dcp_profiles::library_owned(profiles, file) {
-            if crate::file_access::reject_other_names(file).is_err() {
-                continue;
-            }
-        } else if crate::file_access::check_read(file).is_err() {
-            continue;
-        }
-        if let Some(l) = std::fs::read_to_string(&p.file).ok().and_then(|t| lightcraft_pipeline::lut::Lut3d::parse_cube(&t).ok()) {
-            lightcraft_pipeline::lut::register(&p.id, l);
+        let allowed = if super::dcp_profiles::library_owned(profiles, file) {
+            crate::file_access::reject_other_names(file).is_ok()
+        } else {
+            crate::file_access::check_read(file).is_ok()
+        };
+        let lut = allowed.then(|| std::fs::read_to_string(&p.file).ok().and_then(|t| lightcraft_pipeline::lut::Lut3d::parse_cube(&t).ok())).flatten();
+        match lut {
+            Some(l) => lightcraft_pipeline::lut::register(&p.id, l),
+            // The registry is the whole process's: an id another library registered must not stand in for this one.
+            None => lightcraft_pipeline::lut::unregister(&p.id),
         }
     }
 }

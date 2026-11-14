@@ -339,8 +339,12 @@ pub fn check_write_pair(path: impl AsRef<Path>, placed: impl AsRef<Path>) -> Res
 /// Refuse `path` when it is a file with another name, even if its folder is the library's own.
 ///
 /// Location is not checked: a library copy outside the automation roots is still the operator's
-/// file, but a second name of it may not be.
+/// file, but a second name of it may not be. Always, without roots in force: the rule is about
+/// what an agent could reach, and a library may hold files with a second name.
 pub(crate) fn reject_other_names(path: &Path) -> Result<(), String> {
+    if current().is_none() {
+        return Ok(());
+    }
     one_name(path)
 }
 
@@ -395,11 +399,12 @@ impl AutomationRoots {
         if path.as_os_str().is_empty() {
             return Err(Unresolved::Named("automation path rejected: path is empty".into()));
         }
-        self.reject_unsafe_prefix(path)?;
-        // Checked as given: making `…\NUL` absolute gives the device path `\\.\NUL` on Windows.
+        // Checked as given, and first: making `…\NUL` absolute gives the device path `\\.\NUL` on Windows,
+        // which the prefix check would refuse for the wrong reason.
         if cfg!(windows) && path.components().any(|c| matches!(c, Component::Normal(n) if n.to_str().is_none_or(is_device_name))) {
             return Err(Unresolved::Named(format!("automation path rejected: reserved device names are not allowed: {}", path.display())));
         }
+        self.reject_unsafe_prefix(path)?;
         let absolute =
             std::path::absolute(path).map_err(|e| Unresolved::Hidden(format!("automation path rejected: cannot resolve {}: {e}", path.display())))?;
         // The names below the nearest existing folder, last first.
@@ -749,6 +754,23 @@ mod tests {
         assert!(e.contains("reserved device names"), "{e}");
         assert!(roots.check(s(base.join("out/com1.txt")), Access::Write).is_err());
         assert_eq!(roots.check(s(base.join("out/console.txt")), Access::Write), Ok(()));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A second name is refused only while roots are in force, for the library's own files too.
+    #[test]
+    fn a_second_name_is_refused_for_a_library_file_only_while_roots_are_in_force() {
+        let (base, roots) = folders("second-name");
+        let (file, other) = (base.join("out/profile.dcp"), base.join("outside/also.dcp"));
+        std::fs::write(&file, b"x").unwrap();
+        if std::fs::hard_link(&file, &other).is_err() {
+            lightcraft_testkit::skip!(System, "this volume has no hard links");
+            return;
+        }
+        assert_eq!(reject_other_names(&file), Ok(()), "no roots: the library's file is read as it always was");
+        let e = confine(Some(&roots), || reject_other_names(&file)).unwrap_err();
+        assert!(e.contains("more than one name"), "{e}");
+        assert_eq!(confine(Some(&roots), || unconfined(|| reject_other_names(&file))), Ok(()), "unconfined: the operator's own open");
         let _ = std::fs::remove_dir_all(base);
     }
 
