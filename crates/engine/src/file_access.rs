@@ -119,6 +119,13 @@ impl AutomationRoots {
         let same = lightcraft_catalog::safe_file::same_file_strict(path, placed)
             .map_err(|e| format!("automation path rejected: cannot verify the placed file pair ({path:?}, {placed:?}): {e}"))?;
         if same {
+            // two names of one file, not a link to it: the count follows links, and a link left standing
+            // when the source goes would point at nothing
+            for name in [path, placed] {
+                if std::fs::symlink_metadata(name).is_ok_and(|m| m.file_type().is_symlink()) {
+                    return Err(format!("automation path rejected: the placed file pair is a link, not a second name: {}", name.display()));
+                }
+            }
             match lightcraft_catalog::safe_file::link_count(path) {
                 Ok(2) => Ok(()),
                 Ok(count) => Err(format!("automation path rejected: the placed file pair has {count} names, not two: {}", path.display())),
@@ -962,6 +969,24 @@ mod tests {
             }
         }
         assert!(roots.check(s(base.join("in/a.jpg")), Access::Read).is_ok(), "a drive path still passes");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A pair counts as two names of one file only when neither is a link.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_the_source_is_not_its_placed_second_name() {
+        let (base, roots) = folders("pair-link");
+        let (file, extra, placed_link, placed_name) =
+            (base.join("out/a.xmp"), base.join("out/b.xmp"), base.join("out/c.xmp"), base.join("out/d.xmp"));
+        std::fs::write(&file, b"x").unwrap();
+        std::fs::hard_link(&file, &extra).unwrap();
+        std::os::unix::fs::symlink(&file, &placed_link).unwrap();
+        let e = roots.check_write_pair(&file, &placed_link).unwrap_err();
+        assert!(e.contains("is a link, not a second name"), "{e}");
+        std::fs::remove_file(&extra).unwrap();
+        std::fs::hard_link(&file, &placed_name).unwrap();
+        assert_eq!(roots.check_write_pair(&file, &placed_name), Ok(()), "two hard-link names are a pair");
         let _ = std::fs::remove_dir_all(base);
     }
 
