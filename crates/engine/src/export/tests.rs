@@ -1542,6 +1542,7 @@ fn file_name_fallback_and_extension_are_one_path_component() {
 /// A graphic is read within 8192 x 8192 pixels: a PNG header declaring more is refused before any pixel is allocated.
 #[test]
 fn a_graphic_past_the_pixel_cap_is_refused_before_it_is_decoded() {
+    /// The CRC-32 of `data`, as a PNG chunk carries it.
     fn crc32(data: &[u8]) -> u32 {
         let mut crc = !0u32;
         for &b in data {
