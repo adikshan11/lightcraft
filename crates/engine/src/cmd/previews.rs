@@ -456,10 +456,11 @@ fn run_all(jobs: Vec<PhotoJobs>, state: &PreviewBuild, task: Option<&TaskGuard>,
             }
         }
     };
+    // the lanes have no roots of their own: they read under the ones in force here
+    #[cfg(not(target_arch = "wasm32"))]
+    let roots = crate::file_access::handoff();
     #[cfg(not(target_arch = "wasm32"))]
     std::thread::scope(|sc| {
-        // the lanes have no roots of their own: they read under the ones in force here
-        let roots = crate::file_access::handoff();
         for k in 1..lanes.max(1) {
             let roots = &roots;
             // a lane that can't start leaves its photos to the others (and to this thread)

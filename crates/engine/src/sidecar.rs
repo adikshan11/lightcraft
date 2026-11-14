@@ -1176,7 +1176,8 @@ impl Session {
         // On a case-insensitive volume `a.xmp` also answers for `a.XMP`: the spelling the folder
         // lists comes first, so the atomic write doesn't rename the packet.
         use crate::rename::MoveFs;
-        let existing: Vec<PathBuf> = candidates.into_iter().filter(|path| path.is_file()).collect();
+        // (a name outside the roots is not asked about: it is refused below when it is the one chosen)
+        let existing: Vec<PathBuf> = candidates.into_iter().filter(|path| crate::file_access::may_probe(path) && path.is_file()).collect();
         let listed = existing.iter().find(|path| crate::rename::RealFs.listed(path)).cloned();
         let path = listed.or_else(|| existing.into_iter().next()).unwrap_or(preferred);
         self.validate_sidecar_packets_for_paths(std::slice::from_ref(&path), &crate::rename::RealFs)?;
