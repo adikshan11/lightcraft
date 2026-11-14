@@ -256,8 +256,7 @@ pub(crate) fn load_index(archive_dir: Option<&Path>) -> crate::Result<ImportInde
     let Some(dir) = archive_dir else { return Ok(ImportIndex::default()) };
     let path = dir.join(INDEX_FILE);
     let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
-    let allowed =
-        if is_link(dir) || is_link(&path) { crate::file_access::check_read(&path) } else { crate::file_access::reject_other_names(&path) };
+    let allowed = if is_link(dir) || is_link(&path) { crate::file_access::check_read(&path) } else { crate::file_access::reject_other_names(&path) };
     allowed.map_err(error)?;
     let file = match std::fs::File::open(&path) {
         Ok(file) => file,
