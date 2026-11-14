@@ -1702,6 +1702,7 @@ fn originals_on_other_computers_are_never_looked_at_or_added() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// An optional table over the size limit is skipped with a warning, not read.
 #[test]
 fn oversized_optional_table_warns_and_is_skipped() {
     let mut main = vec![0u8; 2 * 512];

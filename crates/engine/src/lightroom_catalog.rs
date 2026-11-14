@@ -1015,6 +1015,7 @@ pub fn import(s: &mut crate::Session, path: &Path, update_existing: bool) -> cra
     Ok(completion.report)
 }
 
+/// Import `data` into `s` in one step, as the job does in several, for the tests.
 #[cfg(test)]
 fn apply(s: &mut crate::Session, data: CatalogImport, update_existing: bool) -> crate::Result<Value> {
     let archive_dir = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("Interop"));
