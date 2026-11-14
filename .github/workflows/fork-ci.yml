@@ -1,0 +1,50 @@
+name: Fork CI
+
+# Runs the project's own checks on GitHub's machines, so the local Docker VM doesn't have to.
+# On a scratch branch of the fork only. Never part of the pull request.
+on:
+  push:
+    branches: ["ci-scratch-**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 170
+    env:
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust 1.95
+        shell: bash
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt --no-self-update
+          rustup default 1.95.0
+      - name: Format
+        shell: bash
+        run: cargo fmt --all -- --check
+      # The cfg(windows) and cfg(macos) code only goes through clippy on its own platform.
+      - name: Clippy on every target of the crates this pull request touches
+        shell: bash
+        run: cargo clippy --locked -p lightcraft-catalog -p lightcraft-engine -p lightcraft-mcp -p lightcraft-cli --all-targets --keep-going -- -D warnings
+      - name: Engine, MCP and CLI tests
+        if: always()
+        shell: bash
+        run: cargo test --locked -p lightcraft-engine -p lightcraft-mcp -p lightcraft-cli --no-fail-fast
+      - name: The folder lock's own tests, with their output
+        if: always()
+        shell: bash
+        run: cargo test --locked -p lightcraft-engine --lib file_access -- --nocapture --test-threads=1
+      - name: Each fix undone, its test has to fail
+        if: always() && runner.os != 'macOS'
+        shell: bash
+        run: |
+          python3 .github/carry/undo.py || python .github/carry/undo.py
+          if [ "$RUNNER_OS" = "Windows" ]; then python .github/carry/undo.py windows; fi

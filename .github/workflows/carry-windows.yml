@@ -1,0 +1,24 @@
+name: Windows leg of CI for lightcraft 3744
+
+# On a throwaway branch of the fork only: the inputs are copied from ci-windows.yml, which the
+# upstream repository hasn't yet approved to run for this pull request.
+on:
+  push:
+    branches: ["ci-scratch-**"]
+
+permissions:
+  contents: read
+
+jobs:
+  gate-windows:
+    uses: storytold/craft-common-actions/.github/workflows/gate.yml@main
+    with:
+      os: '["windows-latest"]'
+      craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+      targets: ""
+      tools: ""
+      timeout-minutes: 90
+      windows-command: |
+        pkgs=(-p lightcraft-wincolor -p lightcraft-catalog -p lightcraft-engine -p lightcraft-ui-egui -p lightcraft -p lightcraft-cli)
+        cargo clippy "${pkgs[@]}" --all-targets --keep-going -- -D warnings
+        cargo test "${pkgs[@]}" --lib --bins --tests --no-fail-fast
