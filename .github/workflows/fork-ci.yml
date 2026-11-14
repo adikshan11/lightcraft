@@ -25,8 +25,8 @@ jobs:
       - name: Rust 1.95
         shell: bash
         run: |
-          rustup toolchain install 1.95.0 --profile minimal --component clippy --component rustfmt --no-self-update
-          rustup default 1.95.0
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt --no-self-update
+          rustup default stable
       - name: Format
         shell: bash
         run: cargo fmt --all -- --check
@@ -47,5 +47,5 @@ jobs:
         if: always() && runner.os != 'macOS'
         shell: bash
         run: |
-          python3 .github/carry/undo.py || python .github/carry/undo.py
-          if [ "$RUNNER_OS" = "Windows" ]; then python .github/carry/undo.py windows; fi
+          # (the other mutations are for tests that exist, or fail, only on Unix)
+          if [ "$RUNNER_OS" = "Windows" ]; then python .github/carry/undo.py windows; else python3 .github/carry/undo.py; fi
