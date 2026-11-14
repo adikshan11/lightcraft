@@ -171,6 +171,7 @@ impl Availability {
         self.sweep_checked(None, paths)
     }
 
+    /// Start a sweep of `paths` under the roots in force here, unless one is under way or `epoch` is no longer current.
     fn sweep_checked(&self, epoch: Option<u64>, paths: Vec<String>) -> bool {
         let Some(wake) = &self.background else { return false };
         let mut st = lock(&self.state);
