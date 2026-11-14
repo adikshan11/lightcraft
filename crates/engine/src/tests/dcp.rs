@@ -724,7 +724,6 @@ fn a_delete_does_not_follow_a_profiles_folder_link_out_of_the_roots() {
 }
 
 /// A small identity `.cube`.
-#[cfg(unix)]
 fn identity_cube() -> String {
     let mut cube = String::from("LUT_3D_SIZE 2\n");
     for b in 0..2 {
