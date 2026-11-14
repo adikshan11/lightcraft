@@ -20,7 +20,7 @@ MUTATIONS = [
      [("= prefix else { return false };", "= prefix else { return true };")],
      "lightcraft-engine", ["a_prefix_is_a_drive_or_a_roots_share"], False),
     ("a network path let through on Windows", ENGINE + "file_access.rs",
-     [("if !prefix_allowed(prefix, shares) {", "if false && !prefix_allowed(prefix, shares) {")],
+     [("if [Some(path), absolute.as_deref()].into_iter().flatten().any(|p| self.prefix_is_refused(p)) {", "if false && [Some(path), absolute.as_deref()].into_iter().flatten().any(|p| self.prefix_is_refused(p)) {")],
      "lightcraft-engine", ["a_network_path_is_refused_before_it_is_opened"], True),
     ("every cell of a listing is a path", ENGINE + "file_access/commands.rs",
      [('("library.autoImportScan", &[("listing[0]", Read)]),', '("library.autoImportScan", &[("listing", Read)]),')],
@@ -64,6 +64,21 @@ MUTATIONS = [
     ("a shared sidecar judged as a third name", ENGINE + "import_move.rs",
      [("crate::file_access::check_place(&sc, crate::file_access::Access::Read)?;", "crate::file_access::check_read(&sc)?;")],
      "lightcraft-engine", ["a_confined_move_of_two_photos_with_one_sidecar_goes_through"], False),
+    ("a link to another computer followed on Windows", ENGINE + "file_access.rs",
+     [("if self.link_leads_to_network(&absolute, MAX_LINK_HOPS) {", "if false && self.link_leads_to_network(&absolute, MAX_LINK_HOPS) {")],
+     "lightcraft-engine", ["a_link_to_another_computer_is_refused_without_following_it"], True),
+    ("an availability probe run with no roots", ENGINE + "availability.rs",
+     [("let ok = scope.run(|| probe(&path));", "let _ = &scope;\n                let ok = probe(&path);")],
+     "lightcraft-engine", ["the_worker_probes_under_the_roots_of_the_thread_that_asked"], False),
+    ("merge preview workers reading with no roots", ENGINE + "merge.rs",
+     [("let bytes = roots.run(|| (self.read)(path))?;", "let _ = &roots;\n            let bytes = (self.read)(path)?;")],
+     "lightcraft-engine", ["preview_workers_read_under_the_roots_of_the_caller"], False),
+    ("a cached logo handed to a confined read", ENGINE + "export/watermark.rs",
+     [("if crate::file_access::current().is_none()\n        && let Some((m, img)) = map.get(path)", "if let Some((m, img)) = map.get(path)")],
+     "lightcraft-engine", ["a_confined_logo_read_does_not_take_a_decode_another_read_cached"], False),
+    ("a profile elsewhere read while the library opens", ENGINE + "cmd/lut_profiles.rs",
+     [("crate::file_access::check_read_process(file).is_ok()", "crate::file_access::check_read(file).is_ok()")],
+     "lightcraft-engine::operator_library_roots", ["a_profile_elsewhere_is_judged_by_the_roots_while_the_library_opens"], False),
     ("the roots named in the initialize reply", "crates/mcp/src/headless.rs",
      [('parts.push("read root set".to_string());', 'parts.push(format!("read: {}", r.read_root().map(|p| p.display().to_string()).unwrap_or_default()));')],
      "lightcraft-mcp", ["initialize_does_not_name_the_roots"], False),
@@ -85,7 +100,8 @@ for name, path, edits, package, tests, windows_only in MUTATIONS:
         assert text.count(old) == 1, f"{name}: `{old[:60]}` is there {text.count(old)} times"
         text = text.replace(old, new)
     open(path, "w", encoding="utf-8").write(text)
-    code, out = run(["cargo", "test", "--locked", "-p", package, "--lib", "--", *tests])
+    package, _, target = package.partition("::")
+    code, out = run(["cargo", "test", "--locked", "-p", package, *(["--test", target] if target else ["--lib"]), "--", *tests])
     run(["git", "checkout", "--", path])
     survived = [t for t in tests if f"{t} ... FAILED" not in out]
     verdict = "ok, its tests fail" if not survived else f"STILL PASSES: {survived}"
