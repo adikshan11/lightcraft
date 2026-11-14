@@ -1147,6 +1147,8 @@ impl Session {
             return Err(EngineError::Other(format!("{} is a virtual copy: its settings live only in the library", p.file_name)));
         }
         let orig = file_path(p).ok_or_else(|| EngineError::Other(format!("{} is not a file on disk", p.file_name)))?;
+        // before anything looks at the file: an original outside the roots gets one answer, there or not
+        crate::file_access::check_place(orig, crate::file_access::Access::Read).map_err(EngineError::Other)?;
         // A relative path would be taken from the working directory.
         if Path::new(orig).is_relative() || !Path::new(orig).is_file() {
             return Err(EngineError::Other(format!("{}: the original {orig} is missing; no XMP sidecar is written", p.file_name)));

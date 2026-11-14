@@ -18,9 +18,18 @@ use super::{CommandSpec, always, bad, bool_or, cmd, has_selection, str_param};
 use crate::activity::Cancel;
 use crate::{Result, Session};
 
-/// Where the place names live: `dataset` (a folder) or `<settings>/geonames`.
-fn dataset_dir(p: &Value) -> Option<PathBuf> {
-    str_param(p, "dataset").map(PathBuf::from).or_else(|| crate::config::config_dir().map(|d| d.join("geonames")))
+/// Where the place names live: `dataset` (a folder) or `<settings>/geonames`. A folder a client
+/// names has its files checked too, for a file in it can be a link out of the automation roots; the
+/// settings folder is the app's own.
+fn dataset_dir(p: &Value, c: &str) -> Result<Option<PathBuf>> {
+    let Some(given) = str_param(p, "dataset") else {
+        return Ok(crate::config::config_dir().map(|d| d.join("geonames")));
+    };
+    let dir = PathBuf::from(given);
+    for name in GEONAMES_FILES {
+        crate::file_access::check_read(dir.join(name)).map_err(|e| bad(c, e))?;
+    }
+    Ok(Some(dir))
 }
 
 /// How a place-names download ended.
@@ -93,8 +102,9 @@ impl PlaceNames {
     }
 }
 
+/// `metadata.placeNamesStatus`: whether the place names are downloaded, how big they are and how the download went.
 fn status(s: &mut Session, p: &Value) -> Result<Value> {
-    let dir = dataset_dir(p);
+    let dir = dataset_dir(p, "metadata.placeNamesStatus")?;
     let size = dir.as_ref().and_then(|d| std::fs::metadata(d.join(GEONAMES_FILES[0])).ok()).map(|m| m.len());
     let sh = s.place_names.lock();
     let (last, error) = match &sh.last {
@@ -123,6 +133,7 @@ fn fill(meta: &mut lightcraft_catalog::Meta, place: &lightcraft_geocode::Place, 
     }
 }
 
+/// `metadata.reverseGeocode`: fills the place fields of the photos from their GPS positions.
 fn reverse(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "metadata.reverseGeocode";
     let overwrite = bool_or(p, "overwrite", false);
@@ -144,7 +155,7 @@ fn reverse(s: &mut Session, p: &Value) -> Result<Value> {
     if todo.is_empty() {
         return Err(bad(C, "none of these photos has a GPS position"));
     }
-    let dir = dataset_dir(p).ok_or_else(|| bad(C, "no settings folder: give `dataset`"))?;
+    let dir = dataset_dir(p, C)?.ok_or_else(|| bad(C, "no settings folder: give `dataset`"))?;
     let names = s.place_names.load(&dir).map_err(|e| bad(C, format!("{e}: download the place names first (Photo ▸ Download Place Names)")))?;
     // a large selection shows in the activity stack and can be stopped
     let task = (todo.len() > 1).then(|| s.activity.start("geocode", "Looking up places", Cancel::Yes));
@@ -413,6 +424,41 @@ mod tests {
             assert!(e.to_string().contains("maxDistance"), "{e}");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A place-names folder a client names has its files checked, for one of them can be a link out
+    /// of the roots: its size isn't reported and it isn't read.
+    #[cfg(unix)]
+    #[test]
+    fn a_place_names_file_that_links_out_of_the_roots_is_refused() {
+        use crate::file_access::{AutomationRoots, confine};
+        let base = std::env::temp_dir().join(format!("lightcraft-geocode-roots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, outside) = (base.join("root"), base.join("outside"));
+        for d in [&root, &outside] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+        // a dataset inside the roots works
+        let good = root.join("good");
+        std::fs::create_dir_all(&good).unwrap();
+        std::fs::write(good.join(GEONAMES_FILES[0]), CITIES).unwrap();
+        // one whose cities file is a link to a file outside does not
+        let linked = root.join("linked");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::write(outside.join("cities.txt"), CITIES).unwrap();
+        std::os::unix::fs::symlink(outside.join("cities.txt"), linked.join(GEONAMES_FILES[0])).unwrap();
+        let mut s = Session::with_demo();
+        let ids = s.visible_cloned();
+        set_gps(&mut s, ids[0], Some((48.86, 2.34)), "");
+        let st = confine(Some(&roots), || s.execute("metadata.placeNamesStatus", &json!({"dataset": good}))).unwrap();
+        assert_eq!(st["downloaded"], true, "{st}");
+        for command in ["metadata.placeNamesStatus", "metadata.reverseGeocode"] {
+            let params = json!({"ids": [ids[0].0], "dataset": linked});
+            let e = confine(Some(&roots), || s.execute(command, &params)).unwrap_err().to_string();
+            assert!(e.contains("outside the"), "{command}: {e}");
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

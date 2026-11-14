@@ -243,30 +243,37 @@ pub(crate) struct ImportIndex {
     pub(crate) collection_owners: BTreeMap<String, String>,
 }
 
-pub(crate) fn load_index(path: Option<&Path>) -> crate::Result<ImportIndex> {
-    match path {
-        Some(path) => {
-            if let Err(e) = crate::file_access::check_read(path) {
-                return Err(error(e));
-            }
-            let file = match std::fs::File::open(path) {
-                Ok(file) => file,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ImportIndex::default()),
-                Err(e) => return Err(error(e.to_string())),
-            };
-            if file.metadata().map_err(|e| error(e.to_string()))?.len() > 16 * 1024 * 1024 {
-                return Err(error("Lightroom import index exceeds 16 MiB"));
-            }
-            let mut bytes = Vec::new();
-            use std::io::Read;
-            file.take(16 * 1024 * 1024 + 1).read_to_end(&mut bytes).map_err(|e| error(e.to_string()))?;
-            if bytes.len() > 16 * 1024 * 1024 {
-                return Err(error("Lightroom import index exceeds 16 MiB"));
-            }
-            serde_json::from_slice(&bytes).map_err(|e| error(format!("invalid Lightroom import index: {e}")))
-        }
-        None => Ok(ImportIndex::default()),
+/// The file the import index is kept in, in the library's `Interop` folder.
+pub(crate) const INDEX_FILE: &str = "lightroom-index.json";
+
+/// The import index in `archive_dir`, the library's `Interop` folder (`None`: no library on disk);
+/// empty when there is none yet.
+///
+/// The folder is the operator's library, wherever the roots are, so the file is read without the
+/// agent's read check. A link in its place is judged like any path, and a file with a second name
+/// is refused: neither is the library's own file.
+pub(crate) fn load_index(archive_dir: Option<&Path>) -> crate::Result<ImportIndex> {
+    let Some(dir) = archive_dir else { return Ok(ImportIndex::default()) };
+    let path = dir.join(INDEX_FILE);
+    let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+    let allowed =
+        if is_link(dir) || is_link(&path) { crate::file_access::check_read(&path) } else { crate::file_access::reject_other_names(&path) };
+    allowed.map_err(error)?;
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ImportIndex::default()),
+        Err(e) => return Err(error(e.to_string())),
+    };
+    if file.metadata().map_err(|e| error(e.to_string()))?.len() > 16 * 1024 * 1024 {
+        return Err(error("Lightroom import index exceeds 16 MiB"));
     }
+    let mut bytes = Vec::new();
+    use std::io::Read;
+    file.take(16 * 1024 * 1024 + 1).read_to_end(&mut bytes).map_err(|e| error(e.to_string()))?;
+    if bytes.len() > 16 * 1024 * 1024 {
+        return Err(error("Lightroom import index exceeds 16 MiB"));
+    }
+    serde_json::from_slice(&bytes).map_err(|e| error(format!("invalid Lightroom import index: {e}")))
 }
 
 pub(crate) struct AppliedImport {
@@ -319,6 +326,8 @@ pub(crate) fn validate_for_job(data: &CatalogImport) -> Result<(), String> {
     validate(data)
 }
 
+/// The whole file at `path`, up to the import limit. The caller has checked the path: it is the catalog
+/// the operator named, or the `-wal` beside an unpacked backup.
 fn bytes(path: &Path) -> Result<Vec<u8>, String> {
     use std::io::Read;
     // The caller checked the catalog the operator named. This also reads the `-wal` beside an
@@ -1009,8 +1018,8 @@ pub fn import(s: &mut crate::Session, path: &Path, update_existing: bool) -> cra
 #[cfg(test)]
 fn apply(s: &mut crate::Session, data: CatalogImport, update_existing: bool) -> crate::Result<Value> {
     let archive_dir = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("Interop"));
-    let index_path = archive_dir.as_ref().map(|p| p.join("lightroom-index.json"));
-    let mut index = load_index(index_path.as_deref())?;
+    let index_path = archive_dir.as_ref().map(|p| p.join(INDEX_FILE));
+    let mut index = load_index(archive_dir.as_deref())?;
     let archive_path = archive_dir.as_ref().map(|dir| crate::lightroom_archive::store(dir, &data).map_err(error)).transpose()?;
     let undo0 = s.undo.len();
     let existing: HashMap<_, _> =

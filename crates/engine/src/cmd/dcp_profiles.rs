@@ -75,13 +75,12 @@ pub(super) fn library_owned(dir: Option<&Path>, file: &Path) -> bool {
 }
 
 /// Whether the profile file `file` may be written or removed, with `dir` the library's profiles folder.
+///
+/// The library's own copy always may. Writing renames a new file over the name and removing drops
+/// the name, so a second name of the file, which may lie outside the roots, keeps its bytes; only
+/// reading a file with a second name is refused ([`read_allowed`]).
 pub(super) fn write_allowed(dir: Option<&Path>, file: &Path) -> std::result::Result<(), String> {
-    if library_owned(dir, file) {
-        // The folder is the operator's. A second name of the file may still lie outside the roots.
-        crate::file_access::reject_other_names(file)
-    } else {
-        crate::file_access::check_write(file)
-    }
+    if library_owned(dir, file) { Ok(()) } else { crate::file_access::check_write(file) }
 }
 
 /// The bytes of the profile file `file`, with `dir` the library's profiles folder; outside the automation roots a file

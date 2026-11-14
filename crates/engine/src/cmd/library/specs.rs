@@ -29,8 +29,7 @@ fn next_seed(prev: u64, now: &str) -> u64 {
     (lightcraft_catalog::mix64(prev.wrapping_add(1)) ^ t) & (MAX_SEED - 1)
 }
 
-/// Describe the library commands and their parameter schemas.
-/// Describe the library command parameters.
+/// The library commands and their parameter schemas.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         // ---- view source / filter / sort

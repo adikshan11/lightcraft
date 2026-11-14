@@ -1732,3 +1732,38 @@ fn oversized_optional_table_warns_and_is_skipped() {
     assert!(rows.is_empty());
     assert!(warnings.iter().any(|warning| warning.contains("optional_history")));
 }
+
+/// The import index of a library outside the roots is read, as the operator chose that library;
+/// the same file as a link, or with a second name, is judged like any path.
+#[test]
+fn the_import_index_of_a_library_outside_the_roots_is_read() {
+    use crate::file_access::{AutomationRoots, confine};
+    let base = crate::tests_xmp::temp_dir("lightroom-index");
+    let (root, interop, outside) = (base.join("root"), base.join("library/Interop"), base.join("outside"));
+    for d in [&root, &interop, &outside] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+    let mut index = ImportIndex::default();
+    index.photos.insert("a.jpg".into(), 7);
+    let file = interop.join(INDEX_FILE);
+    std::fs::write(&file, serde_json::to_vec(&index).unwrap()).unwrap();
+    let read = confine(Some(&roots), || load_index(Some(&interop))).unwrap();
+    assert_eq!(read.photos.get("a.jpg"), Some(&7));
+    assert!(confine(Some(&roots), || load_index(None)).unwrap().photos.is_empty());
+    std::fs::remove_file(&file).unwrap();
+    assert!(confine(Some(&roots), || load_index(Some(&interop))).unwrap().photos.is_empty(), "none yet is an empty index");
+    #[cfg(unix)]
+    {
+        let elsewhere = outside.join("index.json");
+        std::fs::write(&elsewhere, serde_json::to_vec(&index).unwrap()).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &file).unwrap();
+        let refused = confine(Some(&roots), || load_index(Some(&interop))).err().unwrap().to_string();
+        assert!(refused.contains("automation"), "{refused}");
+        std::fs::remove_file(&file).unwrap();
+        std::fs::hard_link(&elsewhere, &file).unwrap();
+        let refused = confine(Some(&roots), || load_index(Some(&interop))).err().unwrap().to_string();
+        assert!(refused.contains("more than one name"), "{refused}");
+    }
+    let _ = std::fs::remove_dir_all(base);
+}

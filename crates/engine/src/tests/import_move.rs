@@ -698,3 +698,96 @@ fn folder_renames_and_sidecars_refuse_a_link_standing_outside_the_roots() {
     assert!(sidecar_link.symlink_metadata().unwrap().file_type().is_symlink());
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A placed pair is judged by its paths before either file is opened: a source swapped for a link out
+/// of the roots is refused outright, not compared with the copy, so no answer says whether the
+/// bytes outside match.
+#[cfg(unix)]
+#[test]
+fn finish_checks_the_paths_before_comparing_the_bytes() {
+    use crate::file_access::{AutomationRoots, confine};
+    use crate::import_move::{finish, place};
+    let base = temp_dir("finish-paths-first");
+    let (root, outside) = (base.join("root"), base.join("outside"));
+    let (src, dst_dir) = (root.join("card/a.png"), root.join("library"));
+    std::fs::create_dir_all(&dst_dir).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    write_png(&src, 1);
+    let sidecar = src.with_extension("png.xmp");
+    std::fs::write(&sidecar, xmp(1)).unwrap();
+    let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+    let placed = confine(Some(&roots), || place(&src, &dst_dir, "a.png")).unwrap();
+    // the source photo becomes a link to a file outside whose bytes differ
+    let secret = outside.join("secret.png");
+    write_png(&secret, 2);
+    std::fs::remove_file(&src).unwrap();
+    std::os::unix::fs::symlink(&secret, &src).unwrap();
+    let e = confine(Some(&roots), || finish(&placed)).unwrap_err();
+    assert!(e.contains("automation") && !e.contains("missing or changed"), "{e}");
+    assert!(secret.is_file() && src.symlink_metadata().is_ok(), "nothing was removed");
+    // a sidecar swapped the same way is kept, and the reason is the refusal
+    let (src2, dst2) = (root.join("card2/b.png"), root.join("library2"));
+    std::fs::create_dir_all(&dst2).unwrap();
+    write_png(&src2, 3);
+    let sidecar2 = src2.with_extension("png.xmp");
+    std::fs::write(&sidecar2, xmp(2)).unwrap();
+    let placed2 = confine(Some(&roots), || place(&src2, &dst2, "b.png")).unwrap();
+    let secret_xmp = outside.join("secret.xmp");
+    std::fs::write(&secret_xmp, "not the same").unwrap();
+    std::fs::remove_file(&sidecar2).unwrap();
+    std::os::unix::fs::symlink(&secret_xmp, &sidecar2).unwrap();
+    let kept = confine(Some(&roots), || finish(&placed2)).unwrap();
+    assert!(kept.len() == 1 && kept[0].1.contains("automation") && !kept[0].1.contains("missing or changed"), "{kept:?}");
+    assert!(secret_xmp.is_file());
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An original outside the roots gets one answer from a sidecar save and a move to a folder, whether the
+/// file is there or not: neither says what is outside.
+#[test]
+fn an_original_outside_the_roots_is_refused_the_same_whether_or_not_it_is_there() {
+    use crate::file_access::{AutomationRoots, confine};
+    let base = temp_dir("probe-original");
+    let (root, outside) = (base.join("root"), base.join("outside"));
+    std::fs::create_dir_all(root.join("dest")).unwrap();
+    let photo = outside.join("a.png");
+    write_png(&photo, 1);
+    let mut s = session();
+    let id = s.execute("library.import", &json!({"paths": [photo.to_string_lossy()]})).unwrap()["imported"][0].as_u64().unwrap();
+    let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+    let dest = root.join("dest").to_string_lossy().to_string();
+    let ask = |s: &mut Session| {
+        let sidecar = confine(Some(&roots), || s.save_sidecar(lightcraft_catalog::PhotoId(id))).expect_err("a sidecar outside").to_string();
+        let moved = confine(Some(&roots), || s.execute("photo.moveToFolder", &json!({"ids": [id], "folder": dest}))).expect_err("a move outside");
+        (sidecar, moved.to_string())
+    };
+    let there = ask(&mut s);
+    std::fs::remove_file(&photo).unwrap();
+    let gone = ask(&mut s);
+    assert_eq!(there, gone, "{there:?} / {gone:?}");
+    assert!(there.0.contains("outside the") && there.1.contains("outside the"), "{there:?}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The rename planner asks the disk whether a name is taken: below a folder outside the roots it
+/// hears "no", whether or not the name is there, and inside them it hears the truth.
+#[test]
+fn rename_probes_say_nothing_of_a_folder_outside_the_roots() {
+    use crate::file_access::{AutomationRoots, confine};
+    use crate::rename::{MoveFs, RealFs};
+    let base = temp_dir("probe-names");
+    let (root, outside) = (base.join("root"), base.join("outside"));
+    std::fs::create_dir_all(&root).unwrap();
+    write_png(&outside.join("there.png"), 1);
+    write_png(&root.join("here.png"), 2);
+    let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+    confine(Some(&roots), || {
+        for name in ["there.png", "gone.png"] {
+            assert!(!RealFs.exists(&outside.join(name)) && !RealFs.is_file(&outside.join(name)), "{name}");
+        }
+        assert!(RealFs.exists(&root.join("here.png")) && RealFs.is_file(&root.join("here.png")));
+        assert!(!RealFs.exists(&root.join("gone.png")));
+    });
+    assert!(RealFs.exists(&outside.join("there.png")), "without roots the disk answers");
+    let _ = std::fs::remove_dir_all(&base);
+}

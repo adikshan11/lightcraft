@@ -398,6 +398,7 @@ impl PartFile {
         Ok((PartFile { part, target: target.to_path_buf(), done: false }, f))
     }
 
+    /// Move the finished part file over the target, once the roots and the originals' guard allow it.
     fn commit(mut self, guard: &OriginalGuard) -> Result<(), String> {
         crate::file_access::check_write(&self.target)?;
         guard.check(&self.target)?;

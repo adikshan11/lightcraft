@@ -75,14 +75,18 @@ pub(crate) trait MoveFs {
 pub(crate) struct RealFs;
 
 impl MoveFs for RealFs {
+    /// Whether something answers to `p`. A path the automation roots refuse answers `false`, as a path
+    /// that isn't there does, so a probe says nothing of a folder outside them.
     fn exists(&self, p: &Path) -> bool {
-        std::fs::symlink_metadata(p).is_ok()
+        crate::file_access::may_probe(p) && std::fs::symlink_metadata(p).is_ok()
     }
 
+    /// Whether `p` is a file; `false` for a path the automation roots refuse, as for one that isn't there.
     fn is_file(&self, p: &Path) -> bool {
-        p.is_file()
+        crate::file_access::may_probe(p) && p.is_file()
     }
 
+    /// Whether `a` and `b` are one file, by identity; `false` for a path the roots refuse.
     fn same_file(&self, a: &Path, b: &Path) -> bool {
         if a == b {
             return true;

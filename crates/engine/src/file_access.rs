@@ -29,7 +29,7 @@ pub mod commands;
 
 use std::cell::RefCell;
 use std::ffi::OsString;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::{Arc, OnceLock};
 
 pub use commands::check_command;
@@ -60,11 +60,14 @@ struct Root {
 impl Root {
     /// The folder at `path`, which must exist.
     fn open(path: &Path, access: Access) -> Result<Self, String> {
-        reject_unsafe_prefix(path)?;
         let kind = match access {
             Access::Read => "read",
             Access::Write => "write",
         };
+        // The operator's own choice may be a share; a device is no folder to confine to.
+        if unsafe_prefix(path).is_some_and(|p| !matches!(p, Prefix::UNC(..) | Prefix::VerbatimUNC(..))) {
+            return Err(format!("cannot open the automation {kind} root `{}`: network and device paths are not allowed", path.display()));
+        }
         let resolved = std::fs::canonicalize(path)
             .and_then(|p| if p.is_dir() { Ok(p) } else { Err(std::io::ErrorKind::NotADirectory.into()) })
             .map_err(|e| format!("cannot open the automation {kind} root `{}`: {e}", path.display()))?;
@@ -144,10 +147,11 @@ impl AutomationRoots {
             };
         }
         let in_roots = |p: &Path| roots.iter().any(|r| inside(p, &r.resolved));
-        let resolved = match resolve(path) {
+        let resolved = match self.resolve(path) {
             Ok(found) => found,
-            Err(e) if kept_refusal(&e) || dangling_link_inside(path, &in_roots) => return Err(e),
-            Err(_) => return Err(outside_error(access, path)),
+            Err(Unresolved::Named(e)) => return Err(e),
+            Err(Unresolved::Hidden(e)) if self.dangling_link_inside(path, &in_roots) => return Err(e),
+            Err(Unresolved::Hidden(_)) => return Err(outside_error(access, path)),
         };
         let mut allowed = in_roots(&resolved);
         // Writing to a link replaces, renames or removes the link where it stands, whatever it points to.
@@ -155,7 +159,7 @@ impl AutomationRoots {
             && access == Access::Write
             && let Some(folder) = folder_of_link(path)
         {
-            allowed = resolve(folder).is_ok_and(|found| in_roots(&found));
+            allowed = self.resolve(folder).is_ok_and(|found| in_roots(&found));
         }
         if allowed {
             return Ok(());
@@ -170,10 +174,10 @@ impl AutomationRoots {
         let Some(root) = &self.write else {
             return Err(format!("automation filesystem access is not granted: write authority is absent: {}", path.display()));
         };
-        let resolved = match resolve(path) {
+        let resolved = match self.resolve(path) {
             Ok(found) => found,
-            Err(e) if kept_refusal(&e) => return Err(e),
-            Err(_) => return Err(outside_error(Access::Write, path)),
+            Err(Unresolved::Named(e)) => return Err(e),
+            Err(Unresolved::Hidden(_)) => return Err(outside_error(Access::Write, path)),
         };
         if inside(&resolved, &root.resolved) {
             // The destination is a folder; its link count is not an extra file name.
@@ -193,15 +197,23 @@ fn outside_error(access: Access, path: &Path) -> String {
     format!("automation path rejected: outside the {kind} root: {}", path.display())
 }
 
-/// Refusals that do not depend on whether a folder exists (an empty path, a device name).
-fn kept_refusal(error: &str) -> bool {
-    error.contains("path is empty") || error.contains("reserved device names") || error.contains("network and device paths")
+/// Why [`AutomationRoots::resolve`] gave no path.
+enum Unresolved {
+    /// A fault of the path as written (empty, a device name, another computer): the same whether
+    /// or not anything is there, so it is told as it is.
+    Named(String),
+    /// A fault that depends on what exists below the path. A client is told only that the path is
+    /// outside the roots, so it can't probe for folders with it.
+    Hidden(String),
 }
 
-/// `path` is a symlink standing in a root, so "a link that leads nowhere" does not describe an outside path.
-fn dangling_link_inside(path: &Path, in_roots: &impl Fn(&Path) -> bool) -> bool {
-    let Some(folder) = folder_of_link(path) else { return false };
-    resolve(folder).is_ok_and(|found| in_roots(&found))
+impl AutomationRoots {
+    /// Is `path` a link standing in a root? Then "a link that leads nowhere" says what is wrong, and does not
+    /// describe an outside path.
+    fn dangling_link_inside(&self, path: &Path, in_roots: &impl Fn(&Path) -> bool) -> bool {
+        let Some(folder) = folder_of_link(path) else { return false };
+        self.resolve(folder).is_ok_and(|found| in_roots(&found))
+    }
 }
 
 /// Where the roots are in force on a thread ([`confine`], [`unconfined`]).
@@ -302,6 +314,18 @@ pub fn check_write(path: impl AsRef<Path>) -> Result<(), String> {
     current().map_or(Ok(()), |r| r.check(path, Access::Write))
 }
 
+/// Is `path` in a place `access` allows? Only the place: a file with a second name passes, as it
+/// may be asked about, though not read or changed. For a look at the disk before the real check, so
+/// a path outside the roots gets one answer there or not. Always, without roots in force.
+pub(crate) fn check_place(path: impl AsRef<Path>, access: Access) -> Result<(), String> {
+    current().map_or(Ok(()), |r| r.check_location(path.as_ref(), access))
+}
+
+/// May the disk be asked whether `path` is there? Yes when [`check_place`] allows a read.
+pub(crate) fn may_probe(path: impl AsRef<Path>) -> bool {
+    check_place(path, Access::Read).is_ok()
+}
+
 /// May a new file be created inside this folder, following a folder link to its target?
 pub fn check_write_container(path: impl AsRef<Path>) -> Result<(), String> {
     current().map_or(Ok(()), |r| r.check_container(path))
@@ -312,10 +336,6 @@ pub fn check_write_pair(path: impl AsRef<Path>, placed: impl AsRef<Path>) -> Res
     current().map_or(Ok(()), |r| r.check_write_pair(path, placed))
 }
 
-/// Reject `path` when it is a file with another name, or when that count cannot be read.
-///
-/// `Ok(())` when the path has one name, names a directory, or does not exist yet. A directory is
-/// not counted: its link count includes `.`, `..` and child directories.
 /// Refuse `path` when it is a file with another name, even if its folder is the library's own.
 ///
 /// Location is not checked: a library copy outside the automation roots is still the operator's
@@ -324,6 +344,10 @@ pub(crate) fn reject_other_names(path: &Path) -> Result<(), String> {
     one_name(path)
 }
 
+/// Reject `path` when it is a file with another name, or when that count cannot be read.
+///
+/// `Ok(())` when the path has one name, names a directory, or does not exist yet. A directory is
+/// not counted: its link count includes `.`, `..` and child directories.
 fn one_name(path: &Path) -> Result<(), String> {
     match has_other_names(path) {
         Ok(false) => Ok(()),
@@ -364,66 +388,104 @@ fn folder_of_link(path: &Path) -> Option<&Path> {
     Some(path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")))
 }
 
-/// `path` made absolute with its links followed; for a path that doesn't exist (yet), its nearest
-/// existing folder's links followed and the rest appended.
-fn resolve(path: &Path) -> Result<PathBuf, String> {
-    if path.as_os_str().is_empty() {
-        return Err("automation path rejected: path is empty".into());
-    }
-    reject_unsafe_prefix(path)?;
-    // Checked as given: making `…\NUL` absolute gives the device path `\\.\NUL` on Windows.
-    if cfg!(windows) && path.components().any(|c| matches!(c, Component::Normal(n) if n.to_str().is_none_or(is_device_name))) {
-        return Err(format!("automation path rejected: reserved device names are not allowed: {}", path.display()));
-    }
-    let absolute = std::path::absolute(path).map_err(|e| format!("automation path rejected: cannot resolve {}: {e}", path.display()))?;
-    // The names below the nearest existing folder, last first.
-    let mut missing: Vec<OsString> = vec![];
-    let mut at = absolute.as_path();
-    loop {
-        match std::fs::canonicalize(at) {
-            Ok(mut found) => {
-                found.extend(missing.iter().rev());
-                return Ok(found);
-            }
-            Err(e) => match std::fs::symlink_metadata(at) {
-                Ok(m) if m.file_type().is_symlink() => {
-                    return Err(format!("automation path rejected: a link that leads nowhere: {}", path.display()));
+impl AutomationRoots {
+    /// `path` made absolute with its links followed; for a path that doesn't exist (yet), its nearest
+    /// existing folder's links followed and the rest appended.
+    fn resolve(&self, path: &Path) -> Result<PathBuf, Unresolved> {
+        if path.as_os_str().is_empty() {
+            return Err(Unresolved::Named("automation path rejected: path is empty".into()));
+        }
+        self.reject_unsafe_prefix(path)?;
+        // Checked as given: making `…\NUL` absolute gives the device path `\\.\NUL` on Windows.
+        if cfg!(windows) && path.components().any(|c| matches!(c, Component::Normal(n) if n.to_str().is_none_or(is_device_name))) {
+            return Err(Unresolved::Named(format!("automation path rejected: reserved device names are not allowed: {}", path.display())));
+        }
+        let absolute = std::path::absolute(path)
+            .map_err(|e| Unresolved::Hidden(format!("automation path rejected: cannot resolve {}: {e}", path.display())))?;
+        // The names below the nearest existing folder, last first.
+        let mut missing: Vec<OsString> = vec![];
+        let mut at = absolute.as_path();
+        loop {
+            match std::fs::canonicalize(at) {
+                Ok(mut found) => {
+                    found.extend(missing.iter().rev());
+                    return Ok(found);
                 }
-                // There, yet its real path can't be had (no permission): nothing to compare.
-                Ok(_) => return Err(format!("automation path rejected: cannot resolve {}: {e}", path.display())),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("automation path rejected: cannot resolve {}: {e}", path.display())),
-            },
+                Err(e) => match std::fs::symlink_metadata(at) {
+                    Ok(m) if m.file_type().is_symlink() => {
+                        return Err(Unresolved::Hidden(format!("automation path rejected: a link that leads nowhere: {}", path.display())));
+                    }
+                    // There, yet its real path can't be had (no permission): nothing to compare.
+                    Ok(_) => return Err(Unresolved::Hidden(format!("automation path rejected: cannot resolve {}: {e}", path.display()))),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(Unresolved::Hidden(format!("automation path rejected: cannot resolve {}: {e}", path.display()))),
+                },
+            }
+            let parent = at.parent();
+            match (at.components().next_back(), parent) {
+                (Some(Component::Normal(name)), Some(parent)) => {
+                    missing.push(name.to_os_string());
+                    at = parent;
+                }
+                (Some(Component::ParentDir), _) => {
+                    return Err(Unresolved::Hidden(format!(
+                        "automation path rejected: parent traversal below a folder that doesn't exist: {}",
+                        path.display()
+                    )));
+                }
+                // Down to the root (or drive) and it doesn't exist either.
+                _ => {
+                    let e = std::io::Error::from(std::io::ErrorKind::NotFound);
+                    return Err(Unresolved::Hidden(format!("automation path rejected: cannot resolve {}: {e}", path.display())));
+                }
+            }
         }
-        let parent = at.parent();
-        match (at.components().next_back(), parent) {
-            (Some(Component::Normal(name)), Some(parent)) => {
-                missing.push(name.to_os_string());
-                at = parent;
-            }
-            (Some(Component::ParentDir), _) => {
-                return Err(format!("automation path rejected: parent traversal below a folder that doesn't exist: {}", path.display()));
-            }
-            // Down to the root (or drive) and it doesn't exist either.
-            _ => {
-                let e = std::io::Error::from(std::io::ErrorKind::NotFound);
-                return Err(format!("automation path rejected: cannot resolve {}: {e}", path.display()));
+    }
+
+    /// Refuse a path that leads to another computer or a device before anything opens it. Opening
+    /// `\\host\share\x` contacts `host` and offers it this account's credentials, whatever the roots
+    /// would say afterwards, so the path is judged as written. A drive is let through, and so is a
+    /// share one of the roots is on.
+    fn reject_unsafe_prefix(&self, path: &Path) -> Result<(), Unresolved> {
+        let refused = || Unresolved::Named(format!("automation path rejected: network and device paths are not allowed: {}", path.display()));
+        if cfg!(windows) && is_nt_path(path) {
+            return Err(refused());
+        }
+        // (making a path absolute opens nothing; a relative path takes the working folder's prefix)
+        let absolute = std::path::absolute(path).ok();
+        for prefix in [Some(path), absolute.as_deref()].into_iter().flatten().filter_map(unsafe_prefix) {
+            let mut shares = self.read.iter().chain(self.write.iter()).filter_map(|r| unsafe_prefix(&r.resolved));
+            if !prefix_allowed(prefix, &mut shares) {
+                return Err(refused());
             }
         }
+        Ok(())
     }
 }
 
-/// Refuse Windows network and device namespaces before path resolution can contact them.
-fn reject_unsafe_prefix(path: &Path) -> Result<(), String> {
-    #[cfg(not(windows))]
-    let _ = path;
-    #[cfg(windows)]
-    if let Some(Component::Prefix(prefix)) = path.components().next()
-        && matches!(prefix.kind(), std::path::Prefix::UNC(..) | std::path::Prefix::VerbatimUNC(..) | std::path::Prefix::DeviceNS(..))
-    {
-        return Err(format!("automation path rejected: network and device paths are not allowed: {}", path.display()));
+/// The prefix of `path` when it is not a plain drive (`C:` or `\\?\C:`); only Windows paths have one.
+fn unsafe_prefix(path: &Path) -> Option<Prefix<'_>> {
+    match path.components().next() {
+        Some(Component::Prefix(p)) if !matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) => Some(p.kind()),
+        _ => None,
     }
-    Ok(())
+}
+
+/// Is a prefix that is no drive one of the `shares` a root is on? A share is the same server and
+/// share name in either case, in the plain or the `\\?\UNC\` spelling. A device (`\\.\`) or any other
+/// verbatim name (`\\?\GLOBALROOT`) is never one.
+fn prefix_allowed<'a>(prefix: Prefix<'_>, shares: &mut dyn Iterator<Item = Prefix<'a>>) -> bool {
+    let (Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share)) = prefix else { return false };
+    shares.any(|root| match root {
+        Prefix::UNC(s, n) | Prefix::VerbatimUNC(s, n) => server.eq_ignore_ascii_case(s) && share.eq_ignore_ascii_case(n),
+        _ => false,
+    })
+}
+
+/// Does `path` start with `\\??\`, which Windows takes as a raw system path and [`Path`] does not parse?
+fn is_nt_path(path: &Path) -> bool {
+    let text = path.as_os_str().to_string_lossy();
+    text.starts_with(r"\??\") || text.starts_with("/??/")
 }
 
 /// Is `path` (resolved) `root` or inside it, component by component? Exactly, on Windows too: what
@@ -434,9 +496,9 @@ fn inside(path: &Path, root: &Path) -> bool {
     root.components().all(|r| path.next() == Some(r))
 }
 
-/// A Windows device name (`CON`, `NUL`, `COM1`… also with an extension), which names no file.
+/// A Windows device name (`CON`, `NUL`, `COM1`… also with an extension or a stream, as in `NUL.txt` and `NUL:x`), which names no file.
 fn is_device_name(component: &str) -> bool {
-    let stem = component.split('.').next().unwrap_or(component).trim_end_matches(' ').to_ascii_uppercase();
+    let stem = component.split(['.', ':']).next().unwrap_or(component).trim_end_matches(' ').to_ascii_uppercase();
     let numbered =
         |prefix: &str| stem.strip_prefix(prefix).is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
     matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$" | "CONIN$" | "CONOUT$") || numbered("COM") || numbered("LPT")
@@ -763,7 +825,7 @@ mod tests {
     /// Device names.
     #[test]
     fn device_names() {
-        for d in ["CON", "nul", "Com1", "LPT9.txt", "aux.jpg", "NUL ", "COM¹", "lpt³.txt"] {
+        for d in ["CON", "nul", "Com1", "LPT9.txt", "aux.jpg", "NUL ", "COM¹", "lpt³.txt", "COM1:", "NUL:x", "con:stream.txt"] {
             assert!(is_device_name(d), "{d}");
         }
         for f in ["console", "com10", "COM0", "lpt", "a.jpg", "nul-x"] {
@@ -771,13 +833,64 @@ mod tests {
         }
     }
 
-    /// Network and device prefixes are refused without trying to resolve them.
+    /// A share is let through only when a root is on it, and a device or other verbatim name never.
+    #[test]
+    fn a_prefix_is_a_drive_or_a_roots_share() {
+        use std::ffi::OsStr;
+        let unc = |server, share| Prefix::UNC(OsStr::new(server), OsStr::new(share));
+        let allowed = |prefix, roots: Vec<Prefix<'static>>| prefix_allowed(prefix, &mut roots.into_iter());
+        assert!(!allowed(unc("203.0.113.5", "s"), vec![]), "no root is on a share");
+        assert!(!allowed(unc("203.0.113.5", "s"), vec![unc("host", "s")]));
+        assert!(!allowed(Prefix::VerbatimUNC(OsStr::new("203.0.113.5"), OsStr::new("s")), vec![]));
+        assert!(!allowed(unc("host@SSL", "s"), vec![unc("host", "s")]), "another server");
+        assert!(!allowed(unc("host", "other"), vec![unc("host", "s")]), "another share");
+        assert!(allowed(unc("HOST", "S"), vec![Prefix::VerbatimUNC(OsStr::new("host"), OsStr::new("s"))]), "same share, other case and spelling");
+        assert!(!allowed(Prefix::DeviceNS(OsStr::new("pipe")), vec![unc("host", "s")]));
+        assert!(!allowed(Prefix::Verbatim(OsStr::new("GLOBALROOT")), vec![unc("host", "s")]));
+        assert!(unsafe_prefix(Path::new("/data/x")).is_none() && unsafe_prefix(Path::new("")).is_none());
+        assert!(is_nt_path(Path::new(r"\??\UNC\203.0.113.5\s\x")) && is_nt_path(Path::new("/??/C:/x")));
+        assert!(!is_nt_path(Path::new("/data/??/x")));
+    }
+
+    /// A path to another computer or a device is refused for what it says, without a look for it:
+    /// opening it would contact the host, and an address that answers nothing would make the look
+    /// slow and end in a resolve error instead.
     #[cfg(windows)]
     #[test]
-    fn network_and_device_prefixes_are_refused_before_resolution() {
-        for path in [r"\\server\share\file", r"\\?\UNC\server\share\file", r"\\.\NUL"] {
-            assert!(reject_unsafe_prefix(Path::new(path)).is_err(), "{path}");
+    fn a_network_path_is_refused_before_it_is_opened() {
+        let (base, roots) = folders("network");
+        for (path, prefix) in [
+            (r"\\203.0.113.5\s\x.dng", r"\\203.0.113.5\s"),
+            ("//203.0.113.5/s/x.dng", "//203.0.113.5/s"),
+            (r"\\?\UNC\203.0.113.5\s\x.dng", r"\\?\UNC\203.0.113.5\s"),
+            (r"\\host@SSL\s\x.dng", r"\\host@SSL\s"),
+            (r"\\.\pipe\x", r"\\.\pipe"),
+            (r"\\.\NUL", r"\\.\NUL"),
+            (r"\\?\GLOBALROOT\x", r"\\?\GLOBALROOT"),
+            (r"\??\UNC\203.0.113.5\s\x", r"\??\"),
+        ] {
+            for access in [Access::Read, Access::Write] {
+                let e = roots.check(path, access).unwrap_err();
+                assert!(e.contains("network and device paths are not allowed") && e.contains(prefix), "{path}: {e}");
+                assert!(!e.contains("cannot resolve") && !e.contains("outside the"), "{path}: {e}");
+            }
         }
-        assert!(reject_unsafe_prefix(Path::new(r"C:\photos\file.jpg")).is_ok());
+        assert!(roots.check(s(base.join("in/a.jpg")), Access::Read).is_ok(), "a drive path still passes");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A refusal that doesn't depend on what exists can't be forged with text in the path: a name
+    /// that says "path is empty" below a folder that is there and below one that isn't give one answer.
+    #[test]
+    fn a_path_cannot_forge_a_refusal_that_shows_what_exists() {
+        let (base, roots) = folders("forged");
+        let ask = |dir: &str| {
+            let path = s(base.join(dir).join("../path is empty"));
+            roots.check(&path, Access::Read).unwrap_err().replace(&path, "P")
+        };
+        let (there, gone) = (ask("outside"), ask("outside/no-such-folder"));
+        assert_eq!(there, gone, "{there} / {gone}");
+        assert!(there.contains("outside the read root"), "{there}");
+        let _ = std::fs::remove_dir_all(base);
     }
 }

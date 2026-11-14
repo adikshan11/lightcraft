@@ -266,8 +266,7 @@ impl LightroomJob {
             return Err(cancelled());
         }
         let archive_path = stage_archive(self.archive_dir.as_deref(), &mut data)?;
-        let index_path = self.archive_dir.as_ref().map(|dir| dir.join("lightroom-index.json"));
-        let index = lightroom_catalog::load_index(index_path.as_deref())?;
+        let index = lightroom_catalog::load_index(self.archive_dir.as_deref())?;
         Ok(PreparedLightroom {
             data,
             normal,
@@ -315,7 +314,7 @@ pub fn commit_prepared(s: &mut crate::Session, mut prepared: PreparedLightroom) 
             undo0,
         },
     )?;
-    let path = prepared.token.library_dir().map(|dir| dir.join("Interop/lightroom-index.json"));
+    let path = prepared.token.library_dir().map(|dir| dir.join("Interop").join(crate::lightroom_catalog::INDEX_FILE));
     let bytes = if path.is_some() { Some(serde_json::to_vec(&applied.index).map_err(|e| error(e.to_string()))?) } else { None };
     Ok(LightroomCompletion { report: applied.report, finalization: LightroomArchiveFinalization { path, bytes } })
 }

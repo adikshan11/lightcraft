@@ -7,13 +7,12 @@ use lightcraft_catalog::{ColorLabel, Op};
 use super::{CommandSpec, always, bad, bool_or, cmd, f64_or, has_selection, str_param};
 use crate::Result;
 
-/// Read the selected photos and destination naming parameters for a rename command.
-/// Parse and validate the shared photo rename arguments.
+/// The photos, template and first number of a rename command, after checking each photo's file:
+/// planning asks whether names are taken in its folder, which a folder outside the roots must not answer.
 fn rename_args(s: &crate::Session, p: &Value, c: &str) -> Result<(Vec<lightcraft_catalog::PhotoId>, String, usize)> {
     let template = str_param(p, "template").ok_or_else(|| bad(c, "missing `template`"))?.to_string();
     let start = p.get("start").and_then(Value::as_u64).unwrap_or(1);
     let ids = s.targets(p)?;
-    // planning asks whether names are taken in each photo's folder
     for id in &ids {
         if let Some(lightcraft_catalog::Source::File { path }) = s.catalog.photo(*id).map(|ph| &ph.source) {
             crate::file_access::check_read(path).map_err(|e| bad(c, e))?;

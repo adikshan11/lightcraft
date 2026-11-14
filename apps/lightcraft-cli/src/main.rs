@@ -369,6 +369,9 @@ fn mcp(args: &[String]) -> Result<(), String> {
     )?;
     if let Some(r) = &roots {
         lightcraft_engine::file_access::confine_process(r.clone());
+        // the folders are for this log: a client's `initialize` reply says only which roots are set
+        let shown = |root: Option<&Path>| root.map_or_else(|| "none".to_string(), |p| p.display().to_string());
+        eprintln!("lightcraft-cli mcp: automation roots: read {}, write {}", shown(r.read_root()), shown(r.write_root()));
     }
     let backend: Box<dyn Backend> = match connect {
         Some(addr) => {

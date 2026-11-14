@@ -242,6 +242,9 @@ pub(crate) fn rollback(p: &Placed) {
 /// destination is still there with the same bytes. Then its sidecars, unless another photo still
 /// uses a shared one. `Err` = the source was kept (why); `Ok` lists sidecars kept (path, why).
 pub(crate) fn finish(p: &Placed) -> Result<Vec<(String, String)>, String> {
+    // The paths first: comparing the bytes opens both files, and either may have become a link out
+    // of the roots since the copy was placed.
+    crate::file_access::check_write_pair(&p.src, &p.dst)?;
     // compare the bytes now: either file may have changed since the copy was verified
     let same = match (fs::metadata(&p.src), fs::metadata(&p.dst)) {
         (Ok(s), Ok(d)) => s.is_file() && d.is_file() && same_bytes(&p.src, &p.dst).unwrap_or(false),
@@ -253,11 +256,14 @@ pub(crate) fn finish(p: &Placed) -> Result<Vec<(String, String)>, String> {
     if injected(Fault::FailRemove) {
         return Err("could not remove the original (injected): it stays where it was".into());
     }
-    crate::file_access::check_write_pair(&p.src, &p.dst)?;
     fs::remove_file(&p.src).map_err(|e| format!("could not remove the original ({e}): it stays where it was"))?;
     let mut kept = Vec::new();
     for sc in &p.sidecars {
         let path = sc.src.to_string_lossy().to_string();
+        if let Err(e) = crate::file_access::check_write_pair(&sc.src, &sc.dst) {
+            kept.push((path, format!("could not remove the sidecar ({e})")));
+            continue;
+        }
         if !same_bytes(&sc.src, &sc.dst).unwrap_or(false) {
             kept.push((path, format!("{} is missing or changed: the sidecar is kept", sc.dst.display())));
             continue;
@@ -268,7 +274,7 @@ pub(crate) fn finish(p: &Placed) -> Result<Vec<(String, String)>, String> {
             kept.push((path, format!("also the sidecar of {other}: kept beside it")));
             continue;
         }
-        if let Err(e) = crate::file_access::check_write_pair(&sc.src, &sc.dst).and_then(|()| fs::remove_file(&sc.src).map_err(|e| e.to_string())) {
+        if let Err(e) = fs::remove_file(&sc.src) {
             kept.push((path, format!("could not remove the sidecar ({e})")));
         }
     }
@@ -277,6 +283,9 @@ pub(crate) fn finish(p: &Placed) -> Result<Vec<(String, String)>, String> {
 
 /// A photo (by extension) still beside a stem-named sidecar, sharing its stem.
 pub(crate) fn sibling_photo(sidecar: &Path) -> Option<String> {
+    // listing a folder says what is in it: not one the roots refuse (its place only: a sidecar being
+    // moved has a second name, its placed copy)
+    crate::file_access::may_probe(sidecar).then_some(())?;
     let dir = sidecar.parent()?;
     let stem = sidecar.file_stem()?.to_string_lossy().to_string();
     fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find_map(|f| {

@@ -202,16 +202,17 @@ impl Backend for Headless {
         false
     }
 
-    /// Describe this backend and its configured automation roots.
+    /// What this backend is, for the `initialize` reply a client reads: which access it has, never
+    /// where the roots are (the operator's log has those).
     fn describe(&self) -> String {
         match &self.roots {
             Some(r) => {
                 let mut parts = vec!["headless".to_string()];
-                if let Some(read) = r.read_root() {
-                    parts.push(format!("read: {}", read.display()));
+                if r.read_root().is_some() {
+                    parts.push("read root set".to_string());
                 }
-                if let Some(write) = r.write_root() {
-                    parts.push(format!("write: {}", write.display()));
+                if r.write_root().is_some() {
+                    parts.push("write root set".to_string());
                 }
                 parts.join(", ")
             }

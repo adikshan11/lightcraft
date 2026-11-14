@@ -63,13 +63,20 @@ The rules:
 - **A file has one name.** An existing file with any other name is refused, even when the name that was
   checked is inside a root, because another name may lie outside. A name count that cannot be read is refused too.
   A directory is judged only by where it is.
+  The library's own profile files are the one exception for writing: replacing or removing one drops that
+  name only, so another name of the file keeps its bytes. Reading one with a second name is still refused.
 - **A path outside the roots looks the same whether or not it is there.** The error does not say the configured
   folders, and it does not say that an outside folder is missing.
 - **Links are followed before a path is judged.** Both the roots and every path are resolved first, so `..`, a link to a
   file or folder outside, and a link that leads nowhere are refused before anything is opened. A file that doesn't exist
   yet is judged by its nearest existing folder. Comparison is by whole path components (`/work2` isn't inside `/work`)
   and exact: a folder that exists counts in its real case, so `C:\WORK` finds `C:\Work` on an ordinary Windows volume, and a
-  name that doesn't exist yet has to match. Reserved Windows device names (`CON`, `NUL`, `COM1`…) are refused too.
+  name that doesn't exist yet has to match. Reserved Windows device names (`CON`, `NUL`, `COM1`, `COM¹`, also cut at a
+  period or a colon, as in `NUL:x`) are refused too.
+- **A path to another computer is refused before anything is opened.** Opening `\\host\share\x` contacts that host and
+  offers it this account's credentials, so on Windows a path is judged as written, not resolved like a drive path:
+  `\\host\share`, `\\?\UNC\host\share`, `\\host@SSL\share`, `\\.\` devices, any other `\\?\` name that isn't a drive,
+  and `\??\` are all refused. The one exception is a share a root is on (a root may be named by its share).
 - **Writing to a link acts on the link.** A write can replace, rename or remove the link itself, so a link's own folder
   has to be inside the write root too, whatever the link points to. A file under a linked folder is judged where it
   really is. A write root that is itself a link is used through paths below it: the link alone isn't writable unless its
@@ -90,7 +97,8 @@ the mounted volumes).
 
 Not confined, on purpose:
 
-- What the operator chose at startup: the `--library` folder with its catalog, previews and archives.
+- What the operator chose at startup: the `--library` folder with its catalog, previews, archives and the
+  import index of a Lightroom import (a link or a second name in its place is judged like any path).
   A smart preview is written there from a photo the roots can read. A photo the catalog names outside
   the roots counts as missing and is not read, including as the source of a smart preview.
 - The app's own folders: settings, user presets and templates, the denoise and face models and the lens and place-name

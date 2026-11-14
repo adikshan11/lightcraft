@@ -17,7 +17,8 @@ pub enum Policy {
     /// (`docs/mcp.md`).
     NoPaths,
     /// These parameters name files or folders. A dot goes into an object; a value may be one string
-    /// or a list of them, at any depth.
+    /// or a list of them, at any depth. A name ending in `[0]` is a list of rows whose first cell is
+    /// the path, as in `[[path, size]]`; the other cells are not paths.
     Paths(&'static [(&'static str, Access)]),
     /// Refused while roots are in force, for this reason.
     Refused(&'static str),
@@ -43,7 +44,7 @@ const PATHS: &[(&str, &[(&str, Access)])] = &[
     ("keyword.export", &[("path", Write)]),
     ("keyword.import", &[("path", Read)]),
     ("library.autoImport", &[("folder", Read)]),
-    ("library.autoImportScan", &[("listing", Read)]),
+    ("library.autoImportScan", &[("listing[0]", Read)]),
     ("library.browse", &[("path", Read)]),
     ("library.findMissing", &[("folder", Read)]),
     ("library.import", &[("paths", Read), ("destination", Write)]),
@@ -448,16 +449,32 @@ pub fn check_command(id: &str, params: &Value) -> Result<(), String> {
         Some(Policy::NoPaths) => Ok(()),
         Some(Policy::Paths(paths)) => {
             for (name, access) in paths {
+                let (name, first_cells) = name.strip_suffix("[0]").map_or((*name, false), |n| (n, true));
                 let mut at = Some(params);
                 for part in name.split('.') {
                     at = at.and_then(|v| v.get(part));
                 }
-                if let Some(value) = at {
-                    check_value(value, *access, MAX_DEPTH)?;
+                match (at, first_cells) {
+                    (Some(rows), true) => check_rows(rows, *access)?,
+                    (Some(value), false) => check_value(value, *access, MAX_DEPTH)?,
+                    (None, _) => {}
                 }
             }
             Ok(())
         }
+    }
+}
+
+/// Check the first cell of each row of `rows`, a list of `[path, …]`: the cells after it (a size) are
+/// not paths. A row that isn't a list with a path in front is refused, not skipped.
+fn check_rows(rows: &Value, access: Access) -> Result<(), String> {
+    match rows {
+        Value::Null => Ok(()),
+        Value::Array(rows) => rows.iter().try_for_each(|row| match row.as_array().and_then(|cells| cells.first()) {
+            Some(path) => check_value(path, access, MAX_DEPTH),
+            None => Err("automation command refused: a row must start with a path".into()),
+        }),
+        _ => Err("automation command refused: a path list must be a list".into()),
     }
 }
 
@@ -547,8 +564,11 @@ mod tests {
         (base, roots)
     }
 
-    /// `params` with the value at the dotted `name` set to `value`.
+    /// `params` with the value at the dotted `name` set to `value` (a name ending in `[0]`: the
+    /// first cell of the only row, which also holds a size).
     fn with_param(name: &str, value: Value) -> Value {
+        let (name, rows) = name.strip_suffix("[0]").map_or((name, false), |n| (n, true));
+        let value = if rows { json!([[value, 123]]) } else { value };
         name.rsplit('.').fold(value, |inner, part| json!({ part: inner }))
     }
 
@@ -569,6 +589,25 @@ mod tests {
                     assert!(check_command(id, &with_param(name, json!(format!(" {outside}")))).is_err(), "{id} {name} with a blank");
                 }
             }
+        });
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A listing of `[path, size]` rows is judged by its paths: a valid one passes, an outside path in any row is refused.
+    #[test]
+    fn a_listing_is_judged_by_its_path_column() {
+        let (base, roots) = roots("listing");
+        let (inside, outside) = (base.join("in/a.jpg").to_string_lossy().into_owned(), base.join("outside/x.jpg").to_string_lossy().into_owned());
+        confine(Some(&roots), || {
+            let scan = |listing: Value| check_command("library.autoImportScan", &json!({"listing": listing}));
+            assert!(scan(json!([[inside, 123], [inside, 0]])).is_ok());
+            assert!(scan(json!([])).is_ok() && scan(Value::Null).is_ok());
+            let refused = scan(json!([[inside, 123], [outside, 456]])).unwrap_err();
+            assert!(refused.contains("automation"), "{refused}");
+            assert!(scan(json!([[]])).unwrap_err().contains("start with a path"));
+            assert!(scan(json!([123])).unwrap_err().contains("start with a path"));
+            assert!(scan(json!("a path")).unwrap_err().contains("must be a list"));
+            assert!(scan(json!([[123, inside]])).is_err(), "a size where the path goes is not a path");
         });
         let _ = std::fs::remove_dir_all(&base);
     }

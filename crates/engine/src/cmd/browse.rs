@@ -469,10 +469,11 @@ fn move_to_folder(s: &mut Session, p: &Value) -> Result<Value> {
             continue; // a virtual copy of a photo already moving
         }
         let src = Path::new(path);
+        // before the file is looked at: an original outside the roots gets one answer, there or not
+        crate::file_access::check_write(path).map_err(|e| bad(C, e))?;
         if !src.is_file() {
             return Err(bad(C, format!("{path} is missing or offline: find it first (Find Missing Photos)")));
         }
-        crate::file_access::check_write(path).map_err(|e| bad(C, e))?;
         let Some(file) = src.file_name() else { return Err(bad(C, format!("{path}: no file name"))) };
         if src.parent() == Some(dir) {
             continue; // already there
