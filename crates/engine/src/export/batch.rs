@@ -62,14 +62,17 @@ pub(super) fn run_batch_with(
         cv: std::sync::Condvar::new(),
         ahead: lanes,
     };
+    // the lanes have no roots of their own: they read each original under the ones in force here
+    let roots = crate::file_access::handoff();
     std::thread::scope(|sc| {
         // stops the lanes however this thread leaves the scope: a panic in `progress` or the placer
         // would otherwise leave them waiting and the scope's join would never return
         let _stop = StopOnDrop(&queue);
         for k in 1..lanes {
             let q = &queue;
+            let lane_roots = roots.clone();
             // a lane that can't start leaves its photos to the others (and to this thread)
-            if std::thread::Builder::new().name(format!("export-{k}")).spawn_scoped(sc, move || q.work()).is_err() {
+            if std::thread::Builder::new().name(format!("export-{k}")).spawn_scoped(sc, move || lane_roots.run(|| q.work())).is_err() {
                 break;
             }
         }

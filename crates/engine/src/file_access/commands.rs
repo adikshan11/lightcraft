@@ -687,6 +687,8 @@ mod tests {
             "std::fs::write(",
             "std::fs::remove_file(",
             "std::fs::remove_dir(",
+            "std::fs::remove_dir_all(",
+            "std::fs::hard_link(",
             "std::fs::rename(",
             "std::fs::copy(",
             "std::fs::create_dir(",
@@ -699,6 +701,8 @@ mod tests {
             "fs::write(",
             "fs::remove_file(",
             "fs::remove_dir(",
+            "fs::remove_dir_all(",
+            "fs::hard_link(",
             "fs::rename(",
             "fs::copy(",
             "fs::create_dir(",
@@ -806,10 +810,13 @@ mod tests {
             }
             for (func, body) in functions(code) {
                 let qualified = format!("{name}::{func}");
-                // Library smart previews, a private backup unpack, and a staging file this process created.
+                // Library smart previews, a private backup unpack (its sweep, and the folder it removes when dropped),
+                // a staging file this process created, and the link or copy of a source `place` has already checked.
                 const LIBRARY_OR_PRIVATE: &[&str] = &[
                     "lightroom_catalog.rs::bytes",
                     "lightroom_backup.rs::sweep",
+                    "lightroom_backup.rs::drop",
+                    "import_move.rs::link_or_copy",
                     "slideshow_export.rs::drop",
                     "smart.rs::check_writable",
                     "smart.rs::files",

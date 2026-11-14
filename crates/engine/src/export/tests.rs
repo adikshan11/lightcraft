@@ -1572,3 +1572,49 @@ fn a_graphic_past_the_pixel_cap_is_refused_before_it_is_decoded() {
     assert!(e.contains("too large") || e.contains("10000"), "{e}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A batch's lanes have no roots of their own: each photo is read under the roots in force where the
+/// batch was started, on a lane as on the calling thread.
+#[test]
+fn export_lanes_read_under_the_roots_of_the_caller() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = std::env::temp_dir().join(format!("lc-lanes-roots-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("in")).unwrap();
+    let (reads, bare) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (r2, b2) = (reads.clone(), bare.clone());
+    let reader: crate::merge::ByteReader = Arc::new(move |_| {
+        r2.fetch_add(1, Ordering::Relaxed);
+        if crate::file_access::current().is_none() {
+            b2.fetch_add(1, Ordering::Relaxed);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        Err("stop here".into())
+    });
+    let roots = crate::file_access::AutomationRoots::new(Some(&dir.join("in")), None).unwrap().unwrap();
+    let mut s = crate::Session::new();
+    s.media.file_bytes = Some(reader);
+    let ids: Vec<lightcraft_catalog::PhotoId> = (0..8)
+        .map(|i| {
+            let id = s.catalog.alloc_photo_id();
+            let path = dir.join(format!("in/{i}.jpg")).to_string_lossy().to_string();
+            let photo = lightcraft_catalog::Photo::new(
+                id,
+                lightcraft_catalog::Source::File { path },
+                &format!("{i}.jpg"),
+                "JPEG",
+                60,
+                40,
+                "2026-01-01T10:00:00",
+            );
+            s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(photo) }).unwrap();
+            id
+        })
+        .collect();
+    let o = ExportOptions { format: ExportFormat::Original, ..Default::default() };
+    let (files, _, _) = crate::file_access::confine(Some(&roots), || lanes_batch(&mut s, &ids, &o, 4, false, usize::MAX));
+    assert!(files.is_ok(), "{files:?}");
+    assert!(reads.load(Ordering::Relaxed) >= 2, "the originals were read");
+    assert_eq!(bare.load(Ordering::Relaxed), 0, "a read was made with no roots in force");
+    let _ = std::fs::remove_dir_all(&dir);
+}
