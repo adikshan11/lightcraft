@@ -791,3 +791,29 @@ fn rename_probes_say_nothing_of_a_folder_outside_the_roots() {
     assert!(RealFs.exists(&outside.join("there.png")), "without roots the disk answers");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A photo and a sibling with one stem share a sidecar. Moving the first gives the sidecar a second name, its placed
+/// copy: moving the sibling after it is the same two names, not a third, and goes through.
+#[test]
+fn a_confined_move_of_two_photos_with_one_sidecar_goes_through() {
+    use crate::file_access::{AutomationRoots, confine};
+    use crate::import_move::{finish, place};
+    let base = temp_dir("move-shared-sidecar");
+    let (root, card, library) = (base.join("root"), base.join("root/card"), base.join("root/library"));
+    std::fs::create_dir_all(&library).unwrap();
+    let (raw, jpg, sidecar) = (card.join("a.png"), card.join("a.jpg"), card.join("a.xmp"));
+    write_png(&raw, 1);
+    write_png(&jpg, 2);
+    std::fs::write(&sidecar, xmp(1)).unwrap();
+    let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+    let first = confine(Some(&roots), || place(&raw, &library, "a.png")).unwrap();
+    let kept = confine(Some(&roots), || finish(&first)).unwrap();
+    assert_eq!(kept.len(), 1, "the sidecar stays beside the photo that still uses it: {kept:?}");
+    assert!(sidecar.exists() && library.join("a.xmp").exists());
+    let second = confine(Some(&roots), || place(&jpg, &library, "a.jpg")).unwrap_or_else(|e| panic!("the sibling's move: {e}"));
+    let kept = confine(Some(&roots), || finish(&second)).unwrap();
+    assert!(kept.is_empty(), "{kept:?}");
+    assert!(!raw.exists() && !jpg.exists() && !sidecar.exists(), "both photos and the sidecar left the card");
+    assert!(library.join("a.png").exists() && library.join("a.jpg").exists() && library.join("a.xmp").exists());
+    let _ = std::fs::remove_dir_all(&base);
+}

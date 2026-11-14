@@ -62,7 +62,8 @@ fn call(server: &mut Server, name: &str, args: Value) -> (bool, String, Value) {
     let result = &reply["result"];
     let text =
         result["content"].as_array().map(|arr| arr.iter().filter_map(|c| c["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default();
-    (result["isError"] == true, text, reply)
+    // a reply with a top-level `error` has no `result`: that is a failed call too
+    (result["isError"] == true || reply.get("error").is_some(), text, reply)
 }
 
 /// Call a tool that has to succeed; its text.

@@ -815,3 +815,26 @@ fn deleting_a_hard_linked_library_profile_keeps_the_other_name() {
     assert_eq!(std::fs::read(&secret).unwrap(), b"keep this file");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A LUT profile that the roots refuse takes its id out of the registry, which is the whole process's:
+/// an id another library registered must not stand in for it.
+#[test]
+fn a_denied_lut_does_not_leave_another_librarys_registration_standing() {
+    use crate::cmd::lut_profiles::{LutProfile, register_all};
+    use crate::file_access::{AutomationRoots, confine};
+    let base = temp_dir("lut-stale");
+    let (root, outside) = (base.join("root"), base.join("outside"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+    let secret = outside.join("secret.cube");
+    std::fs::write(&secret, identity_cube()).unwrap();
+    let id = "lut:stale-from-another-library";
+    lightcraft_pipeline::lut::register(id, lightcraft_pipeline::lut::Lut3d::parse_cube(&identity_cube()).unwrap());
+    assert!(lightcraft_pipeline::lut::get(id).is_some());
+    let mut s = Session::new().with_fs();
+    s.lut_profiles.push(LutProfile { id: id.into(), name: id.into(), group: "Imported".into(), file: secret.to_string_lossy().to_string() });
+    confine(Some(&roots), || register_all(&s, None));
+    assert!(lightcraft_pipeline::lut::get(id).is_none(), "the denied profile took its id out");
+    let _ = std::fs::remove_dir_all(&base);
+}
