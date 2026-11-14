@@ -454,8 +454,8 @@ impl AutomationRoots {
         // (making a path absolute opens nothing; a relative path takes the working folder's prefix)
         let absolute = std::path::absolute(path).ok();
         for prefix in [Some(path), absolute.as_deref()].into_iter().flatten().filter_map(unsafe_prefix) {
-            let mut shares = self.read.iter().chain(self.write.iter()).filter_map(|r| unsafe_prefix(&r.resolved));
-            if !prefix_allowed(prefix, &mut shares) {
+            let shares = self.read.iter().chain(self.write.iter()).filter_map(|r| unsafe_prefix(&r.resolved));
+            if !prefix_allowed(prefix, shares) {
                 return Err(refused());
             }
         }
@@ -474,7 +474,7 @@ fn unsafe_prefix(path: &Path) -> Option<Prefix<'_>> {
 /// Is a prefix that is no drive one of the `shares` a root is on? A share is the same server and
 /// share name in either case, in the plain or the `\\?\UNC\` spelling. A device (`\\.\`) or any other
 /// verbatim name (`\\?\GLOBALROOT`) is never one.
-fn prefix_allowed<'a>(prefix: Prefix<'_>, shares: &mut dyn Iterator<Item = Prefix<'a>>) -> bool {
+fn prefix_allowed<'a>(prefix: Prefix<'_>, mut shares: impl Iterator<Item = Prefix<'a>>) -> bool {
     let (Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share)) = prefix else { return false };
     shares.any(|root| match root {
         Prefix::UNC(s, n) | Prefix::VerbatimUNC(s, n) => server.eq_ignore_ascii_case(s) && share.eq_ignore_ascii_case(n),
@@ -838,7 +838,7 @@ mod tests {
     fn a_prefix_is_a_drive_or_a_roots_share() {
         use std::ffi::OsStr;
         let unc = |server, share| Prefix::UNC(OsStr::new(server), OsStr::new(share));
-        let allowed = |prefix, roots: Vec<Prefix<'static>>| prefix_allowed(prefix, &mut roots.into_iter());
+        let allowed = |prefix, roots: Vec<Prefix<'static>>| prefix_allowed(prefix, roots.into_iter());
         assert!(!allowed(unc("203.0.113.5", "s"), vec![]), "no root is on a share");
         assert!(!allowed(unc("203.0.113.5", "s"), vec![unc("host", "s")]));
         assert!(!allowed(Prefix::VerbatimUNC(OsStr::new("203.0.113.5"), OsStr::new("s")), vec![]));
