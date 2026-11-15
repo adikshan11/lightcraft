@@ -120,6 +120,11 @@ impl AutomationRoots {
         let placed = placed.as_ref();
         self.check_location(path, Access::Write)?;
         self.check_location(placed, Access::Write)?;
+        // one entry named twice is no pair: its other name, if it has one, is somebody else's
+        let one_entry = path == placed || std::fs::canonicalize(path).ok().is_some_and(|a| std::fs::canonicalize(placed).ok() == Some(a));
+        if one_entry {
+            return one_name(path);
+        }
         let same = lightcraft_catalog::safe_file::same_file_strict(path, placed)
             .map_err(|e| format!("automation path rejected: cannot verify the placed file pair ({path:?}, {placed:?}): {e}"))?;
         if same {
@@ -347,11 +352,16 @@ pub fn check_read(path: impl AsRef<Path>) -> Result<(), String> {
 /// library the operator chose is open): a file that is not the library's own, such as a LUT or
 /// profile the library names elsewhere, is no more the operator's choice than any other path.
 pub(crate) fn check_read_process(path: impl AsRef<Path>) -> Result<(), String> {
-    let roots = match SCOPE.with(|s| s.borrow().clone()) {
+    effective_roots().map_or(Ok(()), |r| r.check(path, Access::Read))
+}
+
+/// The roots that judge a path that is not the operator's own choice: this thread's, or the process's when this thread is
+/// [`unconfined`].
+fn effective_roots() -> Option<Arc<AutomationRoots>> {
+    match SCOPE.with(|s| s.borrow().clone()) {
         Some(Scope::Confined(r)) => Some(r),
         Some(Scope::Unconfined) | None => PROCESS.get().cloned(),
-    };
-    roots.map_or(Ok(()), |r| r.check(path, Access::Read))
+    }
 }
 
 /// May `path` be written here? Always, without roots in force.
@@ -385,9 +395,11 @@ pub fn check_write_pair(path: impl AsRef<Path>, placed: impl AsRef<Path>) -> Res
 ///
 /// Location is not checked: a library copy outside the automation roots is still the operator's
 /// file, but a second name of it may not be. Always, without roots in force: the rule is about
-/// what an agent could reach, and a library may hold files with a second name.
+/// what an agent could reach, and a library may hold files with a second name. With the process's roots in force, an
+/// unconfined thread (the operator's library opening) is judged by them.
 pub(crate) fn reject_other_names(path: &Path) -> Result<(), String> {
-    if current().is_none() {
+    // (the library the operator chose opens unconfined, but the process's roots still say what a second name may be)
+    if effective_roots().is_none() {
         return Ok(());
     }
     one_name(path)
@@ -1000,6 +1012,7 @@ mod tests {
         std::fs::remove_file(&extra).unwrap();
         std::fs::hard_link(&file, &placed_name).unwrap();
         assert_eq!(roots.check_write_pair(&file, &placed_name), Ok(()), "two hard-link names are a pair");
+        assert!(roots.check_write_pair(&file, &file).is_err(), "one entry named twice is no pair, whatever its link count");
         let _ = std::fs::remove_dir_all(base);
     }
 
