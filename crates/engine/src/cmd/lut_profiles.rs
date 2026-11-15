@@ -228,12 +228,11 @@ pub fn specs() -> Vec<CommandSpec> {
             let dir = profiles_dir(s).filter(|d| Path::new(&s.lut_profiles[i].file).starts_with(d));
             if let Some(d) = &dir {
                 let file = &s.lut_profiles[i].file;
-                super::dcp_profiles::write_allowed(s, Some(d), Path::new(file)).map_err(|e| bad("profile.deleteImported", format!("{file}: {e}")))?;
+                // (a refusal keeps the profile; a file that can't be removed does not)
+                let _ =
+                    super::dcp_profiles::remove_profile(s, d, Path::new(file)).map_err(|e| bad("profile.deleteImported", format!("{file}: {e}")))?;
             }
-            let gone = s.lut_profiles.remove(i);
-            if dir.is_some() {
-                let _ = std::fs::remove_file(&gone.file);
-            }
+            s.lut_profiles.remove(i);
             withdraw(s, &id);
             s.save_prefs()?;
             crate::profile_refs::refresh(s);

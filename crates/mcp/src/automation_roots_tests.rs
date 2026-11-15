@@ -313,6 +313,7 @@ fn symlink_directory_outside_read_root_is_not_traversed() {
     assert!(!error, "import {in_dir}: {text}");
     let imported = reply["result"]["structuredContent"]["imported"].as_array().expect("import response must contain imported photo ids");
     assert_eq!(imported.len(), 1, "Must not import photo through symlink directory: {reply}");
+    assert!(!reply.to_string().contains("secret.png"), "the reply must not name the file out there: {reply}");
     let _ = std::fs::remove_dir_all(base);
 }
 

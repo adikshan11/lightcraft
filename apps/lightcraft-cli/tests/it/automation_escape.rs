@@ -27,7 +27,10 @@ const NOT_WALKED: &[&str] = &["lens.downloadDatabase"];
 
 /// Write a small PNG at `path`.
 fn png(path: &Path) {
-    let img = lightcraft_raster::Rgba8::from_fn(48, 32, |x, y| [(x * 5) as u8, (y * 7) as u8, 100, 255]);
+    // (each file its own pixels, from its name: a copy of one into the roots is not mistaken for another)
+    let seed = path.to_string_lossy().bytes().fold(7u32, |h, b| h.wrapping_mul(31).wrapping_add(u32::from(b)));
+    let (r, g, b) = ((seed & 0xff) as u8, ((seed >> 8) & 0xff) as u8, ((seed >> 16) & 0xff) as u8);
+    let img = lightcraft_raster::Rgba8::from_fn(48, 32, |x, y| [(x * 5) as u8 ^ r, (y * 7) as u8 ^ g, 100 ^ b, 255]);
     std::fs::write(path, lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &Default::default()).unwrap()).unwrap();
 }
 
