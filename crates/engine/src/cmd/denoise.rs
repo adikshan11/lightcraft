@@ -115,7 +115,7 @@ fn identify(path: &Path, c: &str, sha_known: Option<&str>) -> Result<Source> {
     // an `.onnx` with its manifest beside it
     let sibling = path.with_file_name("denoise-model.json");
     if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("onnx"))
-        && let Some(bytes) = read_capped(&sibling, MAX_MANIFEST_BYTES)
+        && let Some(bytes) = crate::file_access::check_read(&sibling).ok().and_then(|()| read_capped(&sibling, MAX_MANIFEST_BYTES))
     {
         let m = manifest::parse(&bytes).map_err(|e| bad(c, format!("{}: {e}", sibling.display())))?;
         if m.id == lightcraft_denoise::builtin::ID {
@@ -320,7 +320,8 @@ fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, "choose an .onnx file with denoise-model.json beside it"));
     }
     let sibling = src.with_file_name("denoise-model.json");
-    let Some(bytes) = read_capped(&sibling, MAX_MANIFEST_BYTES) else {
+    // (the manifest beside a model is a file of its own: asked about like the model, and a refusal reads as unreadable)
+    let Some(bytes) = crate::file_access::check_read(&sibling).ok().and_then(|()| read_capped(&sibling, MAX_MANIFEST_BYTES)) else {
         let why = if sibling.is_file() {
             "denoise-model.json could not be read or is too large"
         } else if src.with_file_name("model.json").is_file() {

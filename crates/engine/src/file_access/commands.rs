@@ -711,7 +711,6 @@ mod tests {
         "lens_profiles.rs",
         "lensfun_download.rs",
         "lightroom_archive.rs",
-        "lightroom_job.rs",
         "lightroom_sqlite.rs",
         "memory.rs",
         "model_download.rs",

@@ -614,6 +614,8 @@ struct SmartCounts {
     /// the stored look stays and the next run with the original online rebuilds them.
     stale_kept: usize,
     removed: usize,
+    /// Proxies the roots did not let be read or written: the folder is not marked as checked while any is left.
+    refused: usize,
     /// `[[id, why]]`
     failed: Vec<Value>,
 }
@@ -666,11 +668,14 @@ fn smart_run(
         let path = crate::smart::existing_file_path(dir, path);
         // (the older flat file may be a link out of a custom folder: a read of it is judged where it lies)
         if confine && crate::file_access::check_read(&path).is_err() {
+            n.refused += 1;
             continue;
         }
         if discard {
             // (a shard folder of a custom folder may be a link out of it: each file is judged where it lies)
-            if (!confine || crate::file_access::check_write(&path).is_ok()) && std::fs::remove_file(&path).is_ok() {
+            if confine && crate::file_access::check_write(&path).is_err() {
+                n.refused += 1;
+            } else if std::fs::remove_file(&path).is_ok() {
                 n.removed += 1;
             }
         } else {
@@ -678,6 +683,11 @@ fn smart_run(
             // full drive) is (re)built, and so is one written by an older encoding or camera-look
             // fit (see `smart::ENCODE_VERSION` and `camera_preview::LOOK_VERSION`) when its
             // original can be read
+            // (a proxy that may not be written is left, and counted, before anything is decoded for it)
+            if confine && crate::file_access::check_write(&path).is_err() {
+                n.refused += 1;
+                continue;
+            }
             let damaged = path.exists();
             let stale = damaged && crate::smart::is_stale_for(&path, look);
             if damaged && !stale && crate::smart::is_valid(&path) {
@@ -879,7 +889,13 @@ fn refresh_stale(dir: &std::path::Path, jobs: Vec<SmartJob>, custom: bool, compl
     if !stale.is_empty() {
         // `custom`: the folder is there already, and must not be recreated if it went away since
         match smart_run(dir, true, custom, false, stale, None) {
-            Ok(n) => log::info!("smart previews: {} refreshed to the current camera look, {} kept (original offline)", n.refreshed, n.stale_kept),
+            Ok(n) => {
+                log::info!("smart previews: {} refreshed to the current camera look, {} kept (original offline)", n.refreshed, n.stale_kept);
+                // (a proxy the roots refused stays eligible: the folder is not marked)
+                if custom && n.refused > 0 {
+                    return;
+                }
+            }
             Err(e) => {
                 // not marked: the next opening tries again
                 log::warn!("smart previews: look refresh: {e}");
