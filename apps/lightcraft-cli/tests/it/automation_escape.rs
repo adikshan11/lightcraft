@@ -362,13 +362,15 @@ fn walk(tag: &str, read: bool, write: bool) -> Vec<String> {
     let (reads, writes) = escapes(&base);
     let sent: Vec<String> = reads.iter().chain(&writes).map(|t| t.to_string()).collect();
     let targets = reads.iter().map(|t| (READ_NAMES, t)).chain(writes.iter().map(|t| (WRITE_NAMES, t)));
-    for (names, target) in targets {
+    for (n, (names, target)) in targets.enumerate() {
+        // (what was sent so far: a reply that names a path not yet sent listed something out there)
+        let so_far = &sent[..=n];
         // (a pass ends with the commands that delete the photo: the next target starts with it back)
         let _ = mcp.tool("import", json!({"paths": [photo.to_string_lossy()]}));
         for id in &ids {
             let params = path_params(names, target);
             let r = mcp.tool("run_command", json!({"command": id, "params": params}));
-            if leaks(&r, &sent) {
+            if leaks(&r, so_far) {
                 found.push(format!("{id} {target}: {r}"));
             }
             // A command that reaches the path check has to be refused by the roots, so a missing
@@ -507,4 +509,12 @@ fn an_echoed_file_path_is_no_leak_when_its_folder_was_sent_too() {
     let file = format!("{dir}/{SECRET}.png");
     assert!(!leaks(&json!({"echo": file.clone()}), &[dir.clone(), file.clone()]), "only what the caller sent");
     assert!(leaks(&json!({"echo": format!("{dir}/{SECRET}2.png")}), &[dir, file]), "another name out there is one");
+}
+
+/// A reply that names a path the caller has not sent yet listed it: only what was already sent is the caller's own words.
+#[test]
+fn a_path_not_yet_sent_is_a_leak_when_a_reply_names_it() {
+    let (sent, later) = ("/tmp/lc/outside".to_string(), format!("/tmp/lc/outside/{SECRET}.png"));
+    assert!(leaks(&json!({"listing": later.clone()}), std::slice::from_ref(&sent)), "named before it was sent");
+    assert!(!leaks(&json!({"listing": later.clone()}), &[sent, later]), "named once sent");
 }

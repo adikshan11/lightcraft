@@ -663,6 +663,10 @@ fn smart_run(
         // Read either the new shard or a pre-upgrade flat file, without making new work
         // depend on having the original online.
         let path = crate::smart::existing_file_path(dir, path);
+        // (the older flat file may be a link out of a custom folder: a read of it is judged where it lies)
+        if custom && crate::file_access::check_read(&path).is_err() {
+            continue;
+        }
         if discard {
             // (a shard folder of a custom folder may be a link out of it: each file is judged where it lies)
             if (!custom || crate::file_access::check_write(&path).is_ok()) && std::fs::remove_file(&path).is_ok() {
@@ -845,21 +849,24 @@ pub(crate) fn refresh_stale_smart_previews(s: &mut Session) -> Option<std::threa
         // (a custom folder is judged by the roots, each proxy where it lies: its shard folder may be a link out of it)
         .filter(|(_, path, _, _)| s.smart_previews_dir.is_none() || crate::file_access::check_write(path).is_ok())
         .collect();
+    let custom = s.smart_previews_dir.is_some();
+    let complete = jobs.len() == photos.len();
     // (the refresh reads originals and writes proxies: under the roots of the session that started it)
     let roots = crate::file_access::handoff();
     std::thread::Builder::new()
         .name("lc-smart-look".into())
-        .spawn(move || roots.run(|| refresh_stale(&dir, jobs)))
+        .spawn(move || roots.run(|| refresh_stale(&dir, jobs, custom, complete)))
         .map_err(|e| log::warn!("smart previews: could not start the look refresh: {e}"))
         .ok()
 }
 
 /// The body of [`refresh_stale_smart_previews`]: rebuild the stale proxies among `jobs`.
 #[cfg(not(target_arch = "wasm32"))]
-fn refresh_stale(dir: &std::path::Path, jobs: Vec<SmartJob>) {
+fn refresh_stale(dir: &std::path::Path, jobs: Vec<SmartJob>, custom: bool, complete: bool) {
     let stale: Vec<SmartJob> = jobs
         .into_iter()
         .map(|(id, path, source, look)| (id, crate::smart::existing_file_path(dir, path), source, look))
+        .filter(|(_, path, _, _)| !custom || crate::file_access::check_read(path).is_ok())
         .filter(|(_, path, _, look)| crate::smart::is_stale_for(path, *look))
         .collect();
     if !stale.is_empty() {
@@ -872,6 +879,10 @@ fn refresh_stale(dir: &std::path::Path, jobs: Vec<SmartJob>) {
                 return;
             }
         }
+    }
+    // (a custom folder is marked checked only when every proxy was one the roots let through: the marker stands for all)
+    if custom && !complete {
+        return;
     }
     if let Err(e) = crate::smart::mark_look_checked(dir) {
         log::warn!("smart previews: {e}");

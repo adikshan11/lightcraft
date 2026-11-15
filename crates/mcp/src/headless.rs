@@ -81,6 +81,8 @@ impl Headless {
     /// Render `id` (or the active photo) so its long edge is at most `size` pixels.
     pub fn render(&mut self, p: &Value, default_size: u64) -> Result<Rgba8, String> {
         let id = self.photo_or_active(p)?;
+        // (the original is read, or its cached stand-in is used: either is the original's content, so it is asked about first)
+        self.session.check_original_readable(id)?;
         let size = p.get("size").or(p.get("longEdge")).and_then(Value::as_u64).unwrap_or(default_size).clamp(16, 16384) as usize;
         Ok(self.session.render_now(id, size, size)?.image)
     }

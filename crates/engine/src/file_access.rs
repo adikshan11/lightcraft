@@ -481,7 +481,8 @@ impl AutomationRoots {
             std::path::absolute(path).map_err(|e| Unresolved::Hidden(format!("automation path rejected: cannot resolve {}: {e}", path.display())))?;
         // before any link on the way is followed: following one that leads to another computer contacts it
         if self.link_leads_to_network(&absolute, MAX_LINK_HOPS) {
-            return Err(Unresolved::Named(format!("automation path rejected: network and device paths are not allowed: {}", path.display())));
+            // (told as it is only for a path inside the roots: what a link leads to, outside them, is not for a client to learn)
+            return Err(Unresolved::Hidden(format!("automation path rejected: network and device paths are not allowed: {}", path.display())));
         }
         // The names below the nearest existing folder, last first.
         let mut missing: Vec<OsString> = vec![];
@@ -566,6 +567,11 @@ impl AutomationRoots {
                 return true;
             }
             let Ok(target) = std::fs::read_link(&at) else { continue };
+            // a target with a root and no drive (`\x`) or a drive and no root (`C:x`) is read from the working folder of
+            // that drive, which the link does not say: refused, not rebased
+            if !target.is_absolute() && (target.has_root() || matches!(target.components().next(), Some(Component::Prefix(_)))) {
+                return true;
+            }
             // a relative target is read from the folder the link stands in
             let target = if target.is_relative() { at.parent().map_or(target.clone(), |folder| folder.join(&target)) } else { target };
             if self.prefix_is_refused(&target) || self.link_leads_to_network(&target, hops - 1) {

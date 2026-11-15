@@ -225,6 +225,14 @@ impl crate::Session {
         OriginalGuard::new(&self.catalog)
     }
 
+    /// `Err` when the roots do not let the original of photo `id` be read (a photo with no file of its own always may).
+    pub fn check_original_readable(&self, id: lightcraft_catalog::PhotoId) -> Result<(), String> {
+        match self.catalog.photo(id).map(|p| &p.source) {
+            Some(lightcraft_catalog::Source::File { path }) => crate::file_access::check_read(path),
+            _ => Ok(()),
+        }
+    }
+
     /// `Err` when writing `path` would replace a catalogued photo's original or sidecar, or
     /// create one of its sidecars. A free path that isn't an `.xmp` (the usual case) is answered
     /// without building the guard over the whole library.
