@@ -471,10 +471,12 @@ impl Default for Session {
 }
 
 impl Session {
+    /// The generation of the library this session has open (bumped on every open).
     pub fn library_generation(&self) -> u64 {
         self.library_generation
     }
 
+    /// An empty session with its own number and no library.
     pub fn new() -> Session {
         Session {
             library_generation: LIBRARY_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
