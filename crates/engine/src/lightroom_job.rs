@@ -131,6 +131,10 @@ impl LightroomArchiveFinalization {
         let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else {
             return Err(error("the index has no folder"));
         };
+        // (a folder that is a link is not the library's own Interop folder)
+        if std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(error("the library's Interop folder is a link"));
+        }
         let mut store = lightcraft_catalog::FsStore::open(dir).map_err(|e| error(e.to_string()))?;
         store.write_atomic(name, &bytes).map_err(|e| error(e.to_string()))
     }

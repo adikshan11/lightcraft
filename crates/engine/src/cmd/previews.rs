@@ -642,6 +642,7 @@ fn original_only(source: crate::media::SourceRef) -> Option<crate::media::Source
 fn smart_run(
     dir: &std::path::Path,
     custom: bool,
+    confine: bool,
     discard: bool,
     jobs: Vec<SmartJob>,
     state: Option<(&PreviewBuild, &TaskGuard)>,
@@ -664,12 +665,12 @@ fn smart_run(
         // depend on having the original online.
         let path = crate::smart::existing_file_path(dir, path);
         // (the older flat file may be a link out of a custom folder: a read of it is judged where it lies)
-        if custom && crate::file_access::check_read(&path).is_err() {
+        if confine && crate::file_access::check_read(&path).is_err() {
             continue;
         }
         if discard {
             // (a shard folder of a custom folder may be a link out of it: each file is judged where it lies)
-            if (!custom || crate::file_access::check_write(&path).is_ok()) && std::fs::remove_file(&path).is_ok() {
+            if (!confine || crate::file_access::check_write(&path).is_ok()) && std::fs::remove_file(&path).is_ok() {
                 n.removed += 1;
             }
         } else {
@@ -697,7 +698,7 @@ fn smart_run(
                     })
                     .and_then(|b| {
                         // (the proxy is judged where it will lie, under the roots of the thread that builds it)
-                        if custom {
+                        if confine {
                             crate::file_access::check_write(&path)?;
                         }
                         let parent = path.parent().ok_or_else(|| format!("{}: no parent folder", path.display()))?;
@@ -791,7 +792,7 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
         let task = task_for(s, &state);
         let st = state.clone();
         let work = move || {
-            if let Err(e) = smart_run(&dir, custom, discard, jobs, Some((&st, &task))) {
+            if let Err(e) = smart_run(&dir, custom, custom, discard, jobs, Some((&st, &task))) {
                 log::warn!("{C}: {e}");
                 *st.error.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(e);
             }
@@ -821,7 +822,7 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return Ok(state.json());
     }
-    let r = smart_run(&dir, custom, discard, jobs, None).map_err(|e| bad(C, e))?;
+    let r = smart_run(&dir, custom, custom, discard, jobs, None).map_err(|e| bad(C, e))?;
     Ok(
         json!({"built": r.built, "repaired": r.repaired, "refreshed": r.refreshed, "staleKept": r.stale_kept, "removed": r.removed, "failed": r.failed}),
     )
@@ -863,15 +864,21 @@ pub(crate) fn refresh_stale_smart_previews(s: &mut Session) -> Option<std::threa
 /// The body of [`refresh_stale_smart_previews`]: rebuild the stale proxies among `jobs`.
 #[cfg(not(target_arch = "wasm32"))]
 fn refresh_stale(dir: &std::path::Path, jobs: Vec<SmartJob>, custom: bool, complete: bool) {
+    let mut denied = false;
     let stale: Vec<SmartJob> = jobs
         .into_iter()
         .map(|(id, path, source, look)| (id, crate::smart::existing_file_path(dir, path), source, look))
-        .filter(|(_, path, _, _)| !custom || crate::file_access::check_read(path).is_ok())
+        .filter(|(_, path, _, _)| {
+            // (a proxy the roots do not let be read stays eligible for a later refresh)
+            let readable = !custom || crate::file_access::check_read(path).is_ok();
+            denied |= !readable;
+            readable
+        })
         .filter(|(_, path, _, look)| crate::smart::is_stale_for(path, *look))
         .collect();
     if !stale.is_empty() {
         // `custom`: the folder is there already, and must not be recreated if it went away since
-        match smart_run(dir, true, false, stale, None) {
+        match smart_run(dir, true, custom, false, stale, None) {
             Ok(n) => log::info!("smart previews: {} refreshed to the current camera look, {} kept (original offline)", n.refreshed, n.stale_kept),
             Err(e) => {
                 // not marked: the next opening tries again
@@ -881,7 +888,7 @@ fn refresh_stale(dir: &std::path::Path, jobs: Vec<SmartJob>, custom: bool, compl
         }
     }
     // (a custom folder is marked checked only when every proxy was one the roots let through: the marker stands for all)
-    if custom && !complete {
+    if custom && (!complete || denied) {
         return;
     }
     if let Err(e) = crate::smart::mark_look_checked(dir) {

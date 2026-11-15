@@ -150,7 +150,7 @@ pub(crate) fn sidecars_of(src: &Path) -> Vec<(PathBuf, bool)> {
 pub(crate) fn place(src: &Path, dir: &Path, name: &str) -> Result<Placed, String> {
     crate::file_access::check_read(src)?;
     crate::file_access::check_write(src)?;
-    crate::file_access::check_write(dir)?;
+    crate::file_access::check_write_container(dir)?;
     // before anything is placed, so a refusal leaves nothing behind
     // (the place only: a sidecar a sibling's move placed has two names, and is judged with its pair below)
     for (sc, _) in sidecars_of(src) {
@@ -229,7 +229,7 @@ pub(crate) fn place(src: &Path, dir: &Path, name: &str) -> Result<Placed, String
 /// byte with the source.
 pub(crate) fn copy_new(src: &Path, dir: &Path, name: &str, expect: Option<lightcraft_preview::Hash128>) -> Result<PathBuf, String> {
     crate::file_access::check_read(src)?;
-    crate::file_access::check_write(dir)?;
+    crate::file_access::check_write_container(dir)?;
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let (stem, ext) = match name.rsplit_once('.') {
         Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
