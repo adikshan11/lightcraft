@@ -83,6 +83,7 @@ impl State {
             }
             self.queued.clear();
             self.queue.clear();
+            self.sweep.clear();
             self.scopes.clear();
             self.known_for = scope.id();
         }

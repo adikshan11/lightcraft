@@ -108,7 +108,12 @@ pub(super) fn write_profile(s: &Session, dir: &Path, file: &Path, bytes: &[u8]) 
 /// The folder is recorded before the question is asked and checked again right before the file goes, so a folder swapped
 /// for a link in between is refused rather than followed.
 pub(super) fn remove_profile(s: &Session, dir: &Path, file: &Path) -> std::result::Result<std::io::Result<()>, String> {
-    let folder = lightcraft_catalog::OpenedFolder::at(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let folder = match lightcraft_catalog::OpenedFolder::at(dir) {
+        Ok(folder) => folder,
+        // no folder, no file: the entry that names it is stale and goes
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Ok(())),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+    };
     write_allowed(s, Some(dir), file)?;
     folder.check().map_err(|e| e.to_string())?;
     Ok(match std::fs::remove_file(file) {

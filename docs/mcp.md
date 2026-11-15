@@ -59,7 +59,9 @@ Either flag also accepts `--flag=DIR`. A folder whose name starts with `-` has t
 The rules:
 
 - **A root grants its own kind only.** Reads are allowed inside either root, writes only inside the write root. With only
-  a read root nothing can be written; with neither option nothing is confined.
+  a read root nothing can be written by a command or tool that takes a path; with neither option nothing is confined.
+  The roots confine the paths a caller names: the library's own folders and files (smart previews, caches, the catalog and
+  its settings) are written by the app wherever the library is, and are not part of what a root grants.
 - **A file has one name.** An existing file with any other name is refused, even when the name that was
   checked is inside a root, because another name may lie outside. A name count that cannot be read is refused too.
   A directory is judged only by where it is.

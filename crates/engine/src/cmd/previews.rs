@@ -664,7 +664,8 @@ fn smart_run(
         // depend on having the original online.
         let path = crate::smart::existing_file_path(dir, path);
         if discard {
-            if std::fs::remove_file(&path).is_ok() {
+            // (a shard folder of a custom folder may be a link out of it: each file is judged where it lies)
+            if (!custom || crate::file_access::check_write(&path).is_ok()) && std::fs::remove_file(&path).is_ok() {
                 n.removed += 1;
             }
         } else {
