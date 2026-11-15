@@ -29,7 +29,7 @@ MUTATIONS = [
      [("crate::file_access::check_read(dir.join(name)).map_err(|e| bad(c, e))?;", "let _ = (name, c);")],
      "lightcraft-engine", ["a_place_names_file_that_links_out_of_the_roots_is_refused"], False),
     ("the library's import index read through the agent check", ENGINE + "lightroom_catalog.rs",
-     [("if is_link(dir) || is_link(&path) { crate::file_access::check_read(&path) } else { crate::file_access::reject_other_names(&path) }",
+     [("if !intact || is_link(dir) || is_link(&path) { crate::file_access::check_read(&path) } else { crate::file_access::reject_other_names(&path) }",
        "crate::file_access::check_read(&path)")],
      "lightcraft-engine", ["the_import_index_of_a_library_outside_the_roots_is_read"], False),
     ("a placed pair compared before it is checked", ENGINE + "import_move.rs",
