@@ -102,6 +102,21 @@ pub(super) fn write_profile(s: &Session, dir: &Path, file: &Path, bytes: &[u8]) 
     folder.write_atomic(name, bytes).map_err(|e| e.to_string())
 }
 
+/// Remove the profile file `file` of the library's profiles folder `dir`, if [`write_allowed`] says so: `Err` is a refusal,
+/// the inner result is the removal itself (a file that is already gone counts as removed).
+///
+/// The folder is recorded before the question is asked and checked again right before the file goes, so a folder swapped
+/// for a link in between is refused rather than followed.
+pub(super) fn remove_profile(s: &Session, dir: &Path, file: &Path) -> std::result::Result<std::io::Result<()>, String> {
+    let folder = lightcraft_catalog::OpenedFolder::at(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    write_allowed(s, Some(dir), file)?;
+    folder.check().map_err(|e| e.to_string())?;
+    Ok(match std::fs::remove_file(file) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    })
+}
+
 /// The bytes of the profile file `file`, with `dir` the library's profiles folder; outside the automation roots a file
 /// that isn't the library's own counts as missing.
 fn read_allowed(s: &Session, dir: Option<&Path>, file: &Path) -> std::io::Result<Vec<u8>> {
@@ -218,10 +233,8 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         && !Path::new(&entry.file).components().any(|c| c == std::path::Component::ParentDir)
     {
         // (a `Profiles` folder that is a link isn't the library's own: it may lead out of the automation roots)
-        write_allowed(s, Some(&d), Path::new(&entry.file)).map_err(|e| bad(C, format!("{}: {e}", entry.file)))?;
-        match std::fs::remove_file(&entry.file) {
+        match remove_profile(s, &d, Path::new(&entry.file)).map_err(|e| bad(C, format!("{}: {e}", entry.file)))? {
             Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(bad(C, format!("could not delete {}: {e}", entry.file))),
         }
     }
