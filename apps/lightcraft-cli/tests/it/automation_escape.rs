@@ -303,10 +303,12 @@ fn leaks(reply: &Value, sent: &[String]) -> bool {
     let reply = reply.to_string();
     // what the caller itself sent comes back in a reply that records it (the journal lists the params of earlier calls):
     // that is its own words, not what the roots keep from it
+    // (the longest first: a folder's path inside a file's would leave the rest of the file's name behind)
+    let mut asked: Vec<String> = sent.iter().map(|t| serde_json::to_string(t).unwrap_or_default().trim_matches('"').to_string()).collect();
+    asked.sort_by_key(|a| std::cmp::Reverse(a.len()));
     let mut rest = reply.clone();
-    for target in sent {
-        let asked = serde_json::to_string(target).unwrap_or_default();
-        rest = rest.replace(asked.trim_matches('"'), "");
+    for a in &asked {
+        rest = rest.replace(a.as_str(), "");
     }
     rest.contains(SECRET)
         || reply.contains(UNSENT)
@@ -485,4 +487,13 @@ fn links_inside_a_root_are_followed_before_they_are_judged() {
     assert!(!base.join("outside/new.png").exists());
     drop(mcp);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A reply that echoes only a file's path is no leak, though a folder's path is also among what was sent.
+#[test]
+fn an_echoed_file_path_is_no_leak_when_its_folder_was_sent_too() {
+    let dir = "/tmp/lc/outside".to_string();
+    let file = format!("{dir}/{SECRET}.png");
+    assert!(!leaks(&json!({"echo": file.clone()}), &[dir.clone(), file.clone()]), "only what the caller sent");
+    assert!(leaks(&json!({"echo": format!("{dir}/{SECRET}2.png")}), &[dir, file]), "another name out there is one");
 }

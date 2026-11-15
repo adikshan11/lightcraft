@@ -59,7 +59,11 @@ pub(crate) fn write_dng_with(file_bytes: Option<&crate::merge::ByteReader>, path
 /// any work starts, so a refusal leaves nothing behind for the photos before it.
 fn check_beside_originals(s: &Session, ids: &[lightcraft_catalog::PhotoId], c: &str) -> Result<()> {
     for id in ids {
-        if let Some(Source::File { path }) = s.catalog.photo(*id).map(|ph| &ph.source) {
+        // (only a photo the conversion would do: one it skips is no place to write next to)
+        if let Some(ph) =
+            s.catalog.photo(*id).filter(|ph| ph.kind == MediaKind::Raw && !ph.format.eq_ignore_ascii_case("DNG") && ph.copy_of.is_none())
+            && let Source::File { path } = &ph.source
+        {
             crate::file_access::check_read(path).map_err(|e| bad(c, e))?;
             crate::file_access::check_write_container(crate::merge::output_dir(path)).map_err(|e| bad(c, e))?;
         }

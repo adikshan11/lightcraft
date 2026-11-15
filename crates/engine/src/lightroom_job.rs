@@ -201,6 +201,8 @@ pub struct LightroomJob {
     import: ImportJob,
     token: LightroomLibraryToken,
     archive_dir: Option<PathBuf>,
+    /// The library folder as it was opened, to tell whether its `Interop` is still the library's own.
+    library_folder: Option<lightcraft_catalog::OpenedFolder>,
     progress: LightroomProgress,
 }
 
@@ -218,7 +220,15 @@ impl LightroomJob {
             add_done: Arc::clone(&import.done),
             ..LightroomProgress::default()
         };
-        Ok(Self { path, update_existing, import, token: LightroomLibraryToken::capture(s), archive_dir, progress })
+        Ok(Self {
+            path,
+            update_existing,
+            import,
+            token: LightroomLibraryToken::capture(s),
+            archive_dir,
+            library_folder: s.library.as_ref().and_then(|l| l.opened_folder()),
+            progress,
+        })
     }
 
     /// The job's progress, to watch from another thread while [`LightroomJob::prepare`] runs.
@@ -266,7 +276,7 @@ impl LightroomJob {
             return Err(cancelled());
         }
         let archive_path = stage_archive(self.archive_dir.as_deref(), &mut data)?;
-        let index = lightroom_catalog::load_index(self.archive_dir.as_deref())?;
+        let index = lightroom_catalog::load_index(self.archive_dir.as_deref(), self.library_folder.as_ref())?;
         Ok(PreparedLightroom {
             data,
             normal,
