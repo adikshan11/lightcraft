@@ -173,10 +173,6 @@ impl AutomationRoots {
             Err(Unresolved::Named(e)) => return Err(e),
             Err(Unresolved::Hidden(e)) if self.dangling_link_inside(path, &in_roots) => return Err(e),
             Err(Unresolved::Hidden(_)) => return Err(outside_error(access, path)),
-            Err(Unresolved::Link(e)) => {
-                let lexical = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-                return Err(if in_roots(&lexical) { e } else { outside_error(access, path) });
-            }
         };
         let mut allowed = in_roots(&resolved);
         // Writing to a link replaces, renames or removes the link where it stands, whatever it points to.
@@ -203,10 +199,6 @@ impl AutomationRoots {
             Ok(found) => found,
             Err(Unresolved::Named(e)) => return Err(e),
             Err(Unresolved::Hidden(_)) => return Err(outside_error(Access::Write, path)),
-            Err(Unresolved::Link(e)) => {
-                let lexical = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-                return Err(if inside(&lexical, &root.resolved) { e } else { outside_error(Access::Write, path) });
-            }
         };
         if inside(&resolved, &root.resolved) {
             // The destination is a folder; its link count is not an extra file name.
@@ -234,9 +226,6 @@ enum Unresolved {
     /// A fault that depends on what exists below the path. A client is told only that the path is
     /// outside the roots, so it can't probe for folders with it.
     Hidden(String),
-    /// A link on the way leads to another computer or a device: told only for a path inside the roots, and without
-    /// looking at the disk again to find out which.
-    Link(String),
 }
 
 impl AutomationRoots {
@@ -492,8 +481,7 @@ impl AutomationRoots {
             std::path::absolute(path).map_err(|e| Unresolved::Hidden(format!("automation path rejected: cannot resolve {}: {e}", path.display())))?;
         // before any link on the way is followed: following one that leads to another computer contacts it
         if self.link_leads_to_network(&absolute, MAX_LINK_HOPS) {
-            // (told as it is only for a path inside the roots: what a link leads to, outside them, is not for a client to learn)
-            return Err(Unresolved::Link(format!("automation path rejected: network and device paths are not allowed: {}", path.display())));
+            return Err(Unresolved::Named(format!("automation path rejected: network and device paths are not allowed: {}", path.display())));
         }
         // The names below the nearest existing folder, last first.
         let mut missing: Vec<OsString> = vec![];
