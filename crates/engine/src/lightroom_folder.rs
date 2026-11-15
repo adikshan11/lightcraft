@@ -57,6 +57,17 @@ fn strip_suffix_nocase<'a>(name: &'a str, suffix: &str) -> Option<&'a str> {
     tail.eq_ignore_ascii_case(suffix).then(|| name.get(..cut)).flatten()
 }
 
+/// `p.is_file()`, asked only where the automation roots allow the disk to be asked: on Windows a link to a
+/// share is contacted by the question.
+fn is_file(p: &Path) -> bool {
+    crate::file_access::may_probe(p) && p.is_file()
+}
+
+/// `p.is_dir()`, asked only where the automation roots allow the disk to be asked.
+fn is_dir(p: &Path) -> bool {
+    crate::file_access::may_probe(p) && p.is_dir()
+}
+
 /// `name` is `*.lrcat` (any case).
 fn is_lrcat_name(name: &str) -> bool {
     name.to_lowercase().ends_with(".lrcat")
@@ -76,7 +87,7 @@ pub fn find_lrcat(dir: &Path) -> Option<PathBuf> {
         }
         let path = entry.path();
         // (follows a symlink; a folder named `*.lrcat` is not a catalog)
-        if !path.is_file() {
+        if !is_file(&path) {
             continue;
         }
         if found.as_ref().is_none_or(|f| path < *f) {
@@ -88,13 +99,13 @@ pub fn find_lrcat(dir: &Path) -> Option<PathBuf> {
 
 /// `candidate` if it is a file, else the first catalog in `dir`.
 fn catalog_or_scan(candidate: Option<PathBuf>, dir: Option<&Path>) -> Option<PathBuf> {
-    candidate.filter(|c| c.is_file()).or_else(|| dir.and_then(find_lrcat))
+    candidate.filter(|c| is_file(c)).or_else(|| dir.and_then(find_lrcat))
 }
 
 /// Whether `path`, given as a library folder, is a Lightroom Classic catalog or part of one (see
 /// the module docs). `None`: not Lightroom's, open it as a library.
 pub fn lightroom_catalog_at(path: &Path) -> Option<LightroomPlace> {
-    let is_dir = path.is_dir();
+    let is_dir = is_dir(path);
     if is_dir && crate::library::is_library(path) {
         return None;
     }
@@ -103,7 +114,7 @@ pub fn lightroom_catalog_at(path: &Path) -> Option<LightroomPlace> {
     let lower = lower_name(path).unwrap_or_default();
     // the catalog file itself (a folder named `*.lrcat` is looked into below)
     if lower.ends_with(".lrcat") && !is_dir {
-        return Some(LightroomPlace { catalog: path.is_file().then(|| path.to_path_buf()) });
+        return Some(LightroomPlace { catalog: is_file(path).then(|| path.to_path_buf()) });
     }
     // an open catalog's companion files: `Name.lrcat-wal` → `Name.lrcat`
     for c in COMPANIONS {
@@ -167,7 +178,7 @@ fn find_backup_zip(dir: &Path) -> Option<PathBuf> {
         .take(SCAN_LIMIT)
         .flatten()
         .map(|e| e.path())
-        .filter(|p| crate::lightroom_backup::is_backup(p) && p.is_file())
+        .filter(|p| crate::lightroom_backup::is_backup(p) && is_file(p))
         .filter(|p| crate::lightroom_backup::holds_catalog(p))
         .min()
 }
@@ -176,7 +187,6 @@ fn find_backup_zip(dir: &Path) -> Option<PathBuf> {
 fn backup_zips(backups: &Path) -> Option<Vec<PathBuf>> {
     crate::file_access::check_read(backups).ok()?;
     let entries = std::fs::read_dir(backups).ok()?;
-    let zips: Vec<PathBuf> =
-        entries.take(SCAN_LIMIT).flatten().map(|e| e.path()).filter(|p| p.is_dir()).filter_map(|d| find_backup_zip(&d)).collect();
+    let zips: Vec<PathBuf> = entries.take(SCAN_LIMIT).flatten().map(|e| e.path()).filter(|p| is_dir(p)).filter_map(|d| find_backup_zip(&d)).collect();
     (!zips.is_empty()).then_some(zips)
 }

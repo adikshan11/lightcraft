@@ -77,7 +77,10 @@ impl State {
     fn adopt(&mut self, scope: &crate::file_access::Handoff) {
         if self.known_for != scope.id() {
             self.known.clear();
-            self.gone.clear();
+            if !self.gone.is_empty() {
+                self.gone.clear();
+                self.gone_generation += 1;
+            }
             self.queued.clear();
             self.queue.clear();
             self.scopes.clear();

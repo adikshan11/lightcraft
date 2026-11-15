@@ -25,6 +25,12 @@ fn profiles_dir(s: &Session) -> Option<PathBuf> {
     s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("Profiles"))
 }
 
+/// Which session registered each LUT id in the process-wide registry.
+fn owners() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>> {
+    static OWNERS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> = std::sync::OnceLock::new();
+    OWNERS.get_or_init(Default::default)
+}
+
 /// Register every imported profile's LUT with the pipeline (missing files are skipped).
 ///
 /// `profiles` is the `Profiles/` folder of the library being opened; another file outside the automation roots counts as
@@ -40,9 +46,19 @@ pub fn register_all(s: &Session, profiles: Option<&Path>) {
         };
         let lut = allowed.then(|| std::fs::read_to_string(&p.file).ok().and_then(|t| lightcraft_pipeline::lut::Lut3d::parse_cube(&t).ok())).flatten();
         match lut {
-            Some(l) => lightcraft_pipeline::lut::register(&p.id, l),
-            // The registry is the whole process's: an id another library registered must not stand in for this one.
-            None => lightcraft_pipeline::lut::unregister(&p.id),
+            Some(l) => {
+                lightcraft_pipeline::lut::register(&p.id, l);
+                owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(p.id.clone(), s.session_id);
+            }
+            // The registry is the whole process's: take out only what this session put there (or nobody did), so
+            // one session's refusal cannot unregister a LUT another session registered under the same id.
+            None => {
+                let mut owned = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if owned.get(&p.id).is_none_or(|o| *o == s.session_id) {
+                    owned.remove(&p.id);
+                    lightcraft_pipeline::lut::unregister(&p.id);
+                }
+            }
         }
     }
 }

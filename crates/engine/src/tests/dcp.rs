@@ -837,3 +837,33 @@ fn a_denied_lut_does_not_leave_another_librarys_registration_standing() {
     assert!(lightcraft_pipeline::lut::get(id).is_none(), "the denied profile took its id out");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A session whose own LUT is refused must not unregister the same id when another session registered it.
+#[test]
+fn a_denied_lut_leaves_a_registration_that_another_session_made() {
+    use crate::cmd::lut_profiles::{LutProfile, register_all};
+    use crate::file_access::{AutomationRoots, confine};
+    let base = temp_dir("lut-owner");
+    let (root, outside) = (base.join("root"), base.join("outside"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+    let (good, secret) = (root.join("good.cube"), outside.join("secret.cube"));
+    std::fs::write(&good, identity_cube()).unwrap();
+    std::fs::write(&secret, identity_cube()).unwrap();
+    let id = "lut:shared-between-sessions";
+    let profile =
+        |file: &std::path::Path| LutProfile { id: id.into(), name: id.into(), group: "Imported".into(), file: file.to_string_lossy().to_string() };
+    let (mut first, mut second) = (Session::new().with_fs(), Session::new().with_fs());
+    first.lut_profiles.push(profile(&good));
+    second.lut_profiles.push(profile(&secret));
+    confine(Some(&roots), || register_all(&first, None));
+    assert!(lightcraft_pipeline::lut::get(id).is_some(), "the first session registered it");
+    confine(Some(&roots), || register_all(&second, None));
+    assert!(lightcraft_pipeline::lut::get(id).is_some(), "the second session's refusal left the first one's LUT");
+    confine(Some(&roots), || register_all(&first, None));
+    first.lut_profiles[0].file = secret.to_string_lossy().to_string();
+    confine(Some(&roots), || register_all(&first, None));
+    assert!(lightcraft_pipeline::lut::get(id).is_none(), "the owner's own refusal takes it out");
+    let _ = std::fs::remove_dir_all(&base);
+}
