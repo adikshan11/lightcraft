@@ -91,6 +91,8 @@ struct Source {
     file_name: String,
 }
 
+/// Work out what the model file `path` is: a known model by its hash, or an `.onnx` with its manifest beside it (`sha_known`
+/// is the hash when it is already known).
 fn identify(path: &Path, c: &str, sha_known: Option<&str>) -> Result<Source> {
     let meta = std::fs::metadata(path).map_err(|e| bad(c, format!("cannot read `{}`: {e}", path.display())))?;
     if !meta.is_file() {
