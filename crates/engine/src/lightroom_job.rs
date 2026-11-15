@@ -275,6 +275,10 @@ impl LightroomJob {
             normal.rollback();
             return Err(cancelled());
         }
+        // (the library's Interop folder is the library's own only while its folder is still the one that was opened)
+        if let Some(f) = &self.library_folder {
+            f.check().map_err(|e| error(e.to_string()))?;
+        }
         let archive_path = stage_archive(self.archive_dir.as_deref(), &mut data)?;
         let index = lightroom_catalog::load_index(self.archive_dir.as_deref(), self.library_folder.as_ref())?;
         Ok(PreparedLightroom {
