@@ -71,7 +71,7 @@ pub fn register_all(s: &mut Session, profiles: Option<&Path>) {
 
 /// Whether `file` is the library's own copy: directly in its profiles folder `dir`, neither of them a link. The operator
 /// chose the library, so it isn't confined, wherever the automation roots are; a link there is judged like any other path.
-pub(super) fn library_owned(s: &Session, dir: Option<&Path>, file: &Path) -> bool {
+pub(crate) fn library_owned(s: &Session, dir: Option<&Path>, file: &Path) -> bool {
     let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
     // (and the library folder is still the one that was opened: swapped for a link out of the roots, nothing in it is the library's own)
     dir.is_some_and(|d| file.parent() == Some(d) && !is_link(d) && !is_link(file))
@@ -255,28 +255,4 @@ pub fn specs() -> Vec<CommandSpec> {
             delete
         ),
     ]
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-
-    /// The library's own exemption ends when its folder is swapped for a link to another place while it is open.
-    #[test]
-    fn a_library_folder_swapped_for_a_link_is_no_longer_the_librarys_own() {
-        let base = std::env::temp_dir().join(format!("lc-dcp-swap-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        let (lib, elsewhere) = (base.join("lib"), base.join("elsewhere"));
-        std::fs::create_dir_all(elsewhere.join("Profiles")).unwrap();
-        std::fs::create_dir_all(&lib).unwrap();
-        let mut s = Session::new().with_fs();
-        s.open_library(&lib, false).unwrap();
-        let (dir, file) = (lib.join("Profiles"), lib.join("Profiles").join("a.dcp"));
-        std::fs::create_dir_all(&dir).unwrap();
-        assert!(library_owned(&s, Some(&dir), &file), "the folder that was opened");
-        std::fs::rename(&lib, base.join("moved")).unwrap();
-        std::os::unix::fs::symlink(&elsewhere, &lib).unwrap();
-        assert!(!library_owned(&s, Some(&dir), &file), "a link to somewhere else now stands at its name");
-        let _ = std::fs::remove_dir_all(&base);
-    }
 }
