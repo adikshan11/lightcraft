@@ -398,6 +398,7 @@ mod tests {
         }
     }
 
+    /// A prepared import whose job was cancelled, for the tests.
     fn cancelled_prepared(s: &crate::Session) -> PreparedLightroom {
         PreparedLightroom {
             data: empty_data(),
@@ -413,6 +414,7 @@ mod tests {
         }
     }
 
+    /// A prepared import of one photo at `path` with `rating`, for the tests.
     fn prepared_for(s: &crate::Session, path: &str, rating: i64) -> PreparedLightroom {
         let mut image = std::collections::BTreeMap::new();
         image.insert("id_local".into(), serde_json::json!(1));
