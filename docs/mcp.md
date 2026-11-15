@@ -65,6 +65,9 @@ The rules:
   A directory is judged only by where it is.
   The library's own profile files are the one exception for writing: replacing or removing one drops that
   name only, so another name of the file keeps its bytes. Reading one with a second name is still refused.
+  Imported LUT looks are registered for the whole process under their id. A session whose roots refuse its own
+  copy of a look does not remove another session's registration of the same id, so two sessions in one process that
+  import looks of one name share that look.
 - **A path outside the roots looks the same whether or not it is there.** The error does not say the configured
   folders, and it does not say that an outside folder is missing.
 - **Links are followed before a path is judged.** Both the roots and every path are resolved first, so `..`, a link to a
