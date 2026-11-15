@@ -180,7 +180,12 @@ pub(crate) fn place(src: &Path, dir: &Path, name: &str) -> Result<Placed, String
         let sc_ext = sc.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_else(|| "xmp".into());
         let sc_dst =
             if stem_named { placed.dst.with_extension(&sc_ext) } else { PathBuf::from(format!("{}.{sc_ext}", placed.dst.to_string_lossy())) };
-        let r = if sc_dst.exists() {
+        // (nothing asks the disk about a name the roots refuse: a link there could lead anywhere)
+        let r = if let Err(e) = crate::file_access::check_place(&sc_dst, crate::file_access::Access::Read)
+            .and_then(|()| crate::file_access::check_place(&sc_dst, crate::file_access::Access::Write))
+        {
+            Err(e)
+        } else if sc_dst.exists() {
             if lightcraft_catalog::safe_file::same_file_strict(&sc, &sc_dst).unwrap_or(false) {
                 // A sibling's move placed it: two names of one file, which is no third name. Nothing to compare.
                 crate::file_access::check_write_pair(&sc, &sc_dst).map(|()| false)

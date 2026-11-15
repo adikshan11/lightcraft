@@ -46,6 +46,8 @@ pub enum Access {
 pub struct AutomationRoots {
     read: Option<Root>,
     write: Option<Root>,
+    /// Which roots these are, among all that were made in this process: never reused, unlike an address.
+    generation: usize,
 }
 
 /// An existing filesystem root folder with its canonical path and display path.
@@ -84,7 +86,9 @@ impl AutomationRoots {
         }
         let read = read.map(|p| Root::open(p, Access::Read)).transpose()?;
         let write = write.map(|p| Root::open(p, Access::Write)).transpose()?;
-        Ok(Some(Arc::new(Self { read, write })))
+        static GENERATION: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+        let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(Some(Arc::new(Self { read, write, generation })))
     }
 
     /// The read root, absolute with its links followed.
@@ -244,7 +248,7 @@ pub(crate) struct Handoff(Option<Arc<AutomationRoots>>);
 impl Handoff {
     /// Which roots these are: the same number for the same roots, and none for no roots.
     pub(crate) fn id(&self) -> usize {
-        self.0.as_ref().map_or(0, |r| Arc::as_ptr(r) as usize)
+        self.0.as_ref().map_or(0, |r| r.generation)
     }
 
     /// Run `f` with the roots that were in force when this was made.
@@ -997,6 +1001,19 @@ mod tests {
         std::fs::hard_link(&file, &placed_name).unwrap();
         assert_eq!(roots.check_write_pair(&file, &placed_name), Ok(()), "two hard-link names are a pair");
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// Roots made later are never taken for roots that were dropped: an address can be reused, a generation number is not.
+    #[test]
+    fn new_roots_never_share_the_number_of_dropped_ones() {
+        let dir = std::env::temp_dir().join(format!("lc-roots-generation-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..50 {
+            let roots = AutomationRoots::new(Some(&dir), None).unwrap().unwrap();
+            assert!(seen.insert(confine(Some(&roots), || handoff().id())), "a number was handed out twice");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// What is handed to another thread puts the roots in force there; a thread that is handed nothing has none.

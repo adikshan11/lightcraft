@@ -256,6 +256,12 @@ struct ViewFile {
 }
 
 impl Library {
+    /// Whether the folder this library was opened from is still the folder its path names (a library with no recorded
+    /// folder always is).
+    pub(crate) fn folder_unchanged(&self) -> bool {
+        self.folder.as_ref().is_none_or(|f| f.check().is_ok())
+    }
+
     pub fn journal(&self) -> &Journal {
         &self.journal
     }
