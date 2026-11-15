@@ -783,8 +783,17 @@ impl SyncWork {
         }
         // still where the scan found it, and still gone from where the photo says
         let checked = moved.len();
-        let relink: Vec<(PhotoId, String)> =
-            moved.into_iter().filter(|m| Path::new(&m.to).is_file() && !Path::new(&m.from).exists()).map(|m| (PhotoId(m.id), m.to)).collect();
+        let relink: Vec<(PhotoId, String)> = moved
+            .into_iter()
+            .filter(|m| {
+                // (a name the roots refuse is not asked about: it counts as neither found nor gone)
+                crate::file_access::may_probe(&m.to)
+                    && crate::file_access::may_probe(&m.from)
+                    && Path::new(&m.to).is_file()
+                    && !Path::new(&m.from).exists()
+            })
+            .map(|m| (PhotoId(m.id), m.to))
+            .collect();
         step(checked);
         if !relink.is_empty() && !send(SyncStep::Relink(relink)) {
             return;
@@ -792,7 +801,8 @@ impl SyncWork {
         if cancel.load(Relaxed) {
             return;
         }
-        let gone: Vec<PhotoId> = missing.iter().filter(|m| !Path::new(&m.path).exists()).map(|m| PhotoId(m.id)).collect();
+        let gone: Vec<PhotoId> =
+            missing.iter().filter(|m| crate::file_access::may_probe(&m.path) && !Path::new(&m.path).exists()).map(|m| PhotoId(m.id)).collect();
         step(missing.len());
         if !gone.is_empty() && !send(SyncStep::Remove(gone)) {
             return;
