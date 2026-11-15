@@ -230,6 +230,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"deleted": id}))
 }
 
+/// The camera-profile commands.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
