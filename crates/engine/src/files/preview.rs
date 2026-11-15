@@ -134,6 +134,8 @@ pub fn fs_preview_loader() -> PreviewLoader {
         {
             return Some(image);
         }
+        // (asked again: the file may have gained a second name or been swapped for a link since the first look)
+        crate::file_access::check_read(path).ok()?;
         embedded_preview_srgb(&std::fs::read(path).ok()?, max_edge)
     })
 }

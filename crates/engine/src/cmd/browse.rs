@@ -42,7 +42,7 @@ fn browse(s: &mut Session, p: &Value) -> Result<Value> {
             .flatten()
             .filter(|e| !crate::walk::is_hidden_entry(e))
             .map(|e| e.path())
-            .filter(|f| f.is_file() && is_supported(f))
+            .filter(|f| crate::file_access::check_read(f).is_ok() && f.is_file() && is_supported(f))
             .map(|f| f.to_string_lossy().to_string())
             .collect();
         v.sort();

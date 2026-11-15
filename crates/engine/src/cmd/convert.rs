@@ -57,15 +57,9 @@ pub(crate) fn write_dng_with(file_bytes: Option<&crate::merge::ByteReader>, path
 
 /// May each photo's file be read, and a new file be written next to it? Asked of them all before
 /// any work starts, so a refusal leaves nothing behind for the photos before it.
-fn check_beside_originals(s: &Session, ids: &[lightcraft_catalog::PhotoId], c: &str, only_raw_masters: bool) -> Result<()> {
+fn check_beside_originals(s: &Session, ids: &[lightcraft_catalog::PhotoId], c: &str) -> Result<()> {
     for id in ids {
-        // (the conversion to DNG asks only about the photos it would convert: one it skips is no place to write next to)
-        if let Some(ph) = s
-            .catalog
-            .photo(*id)
-            .filter(|ph| !only_raw_masters || (ph.kind == MediaKind::Raw && !ph.format.eq_ignore_ascii_case("DNG") && ph.copy_of.is_none()))
-            && let Source::File { path } = &ph.source
-        {
+        if let Some(Source::File { path }) = s.catalog.photo(*id).map(|ph| &ph.source) {
             crate::file_access::check_read(path).map_err(|e| bad(c, e))?;
             crate::file_access::check_write_container(crate::merge::output_dir(path)).map_err(|e| bad(c, e))?;
         }
@@ -77,7 +71,7 @@ fn check_beside_originals(s: &Session, ids: &[lightcraft_catalog::PhotoId], c: &
 fn convert(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photo.convertToDng";
     let ids = s.targets(p)?;
-    check_beside_originals(s, &ids, C, true)?;
+    check_beside_originals(s, &ids, C)?;
     let mut ops = Vec::new();
     let mut converted = Vec::new();
     let mut skipped = Vec::new();
@@ -175,7 +169,7 @@ fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
         conflict: crate::export::Conflict::Unique,
         ..Default::default()
     };
-    check_beside_originals(s, &ids, C, false)?;
+    check_beside_originals(s, &ids, C)?;
     let mut copies = Vec::new();
     for id in ids {
         copies.push(edit_copy(s, p, id, &opts)?);
@@ -390,7 +384,7 @@ fn reload(s: &mut Session, p: &Value) -> Result<Value> {
 fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photo.duplicate";
     let ids = s.targets(p)?;
-    check_beside_originals(s, &ids, C, false)?;
+    check_beside_originals(s, &ids, C)?;
     let mut made = Vec::new();
     for id in ids {
         let Some(ph) = s.catalog.photo(id).map(|p| (**p).clone()) else { continue };
