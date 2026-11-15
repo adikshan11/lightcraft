@@ -391,6 +391,16 @@ pub fn check_write_container(path: impl AsRef<Path>) -> Result<(), String> {
     current().map_or(Ok(()), |r| r.check_container(path))
 }
 
+/// May `from` be renamed to another place? Under roots, a link is not: a relative target is read from where the link
+/// stands, so moving it changes where it leads, outside the roots or nowhere. Always, without roots in force.
+pub(crate) fn check_movable(from: impl AsRef<Path>) -> Result<(), String> {
+    let from = from.as_ref();
+    if current().is_some() && std::fs::symlink_metadata(from).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(format!("automation path rejected: a link is not moved, its target is read from where it stands: {}", from.display()));
+    }
+    Ok(())
+}
+
 /// Check source removal when its only other name may be the move's verified destination.
 pub fn check_write_pair(path: impl AsRef<Path>, placed: impl AsRef<Path>) -> Result<(), String> {
     current().map_or(Ok(()), |r| r.check_write_pair(path, placed))
@@ -999,6 +1009,23 @@ mod tests {
             }
         }
         assert!(roots.check(s(base.join("in/a.jpg")), Access::Read).is_ok(), "a drive path still passes");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A link is not moved under roots: its relative target would be read from the new place.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_is_not_movable_under_roots() {
+        let (base, roots) = folders("movable");
+        let (file, link) = (base.join("out/a.xmp"), base.join("out/link.xmp"));
+        std::fs::write(&file, b"x").unwrap();
+        std::os::unix::fs::symlink("a.xmp", &link).unwrap();
+        assert_eq!(check_movable(&link), Ok(()), "no roots in force: as it always was");
+        confine(Some(&roots), || {
+            assert_eq!(check_movable(&file), Ok(()), "a file is");
+            let refused = check_movable(&link).unwrap_err();
+            assert!(refused.contains("a link is not moved"), "{refused}");
+        });
         let _ = std::fs::remove_dir_all(base);
     }
 

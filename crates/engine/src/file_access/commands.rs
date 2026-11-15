@@ -477,7 +477,14 @@ pub fn check_command(id: &str, params: &Value) -> Result<(), String> {
 
 /// Parameters (command, name) that name a folder new files are made in, checked as one rather than as a file to write:
 /// a link to a folder is judged by where it leads, so an alias of the write root is the write root.
-pub const CONTAINERS: &[(&str, &str)] = &[("library.import", "destination"), ("app.export", "dir"), ("folder.create", "parent")];
+pub const CONTAINERS: &[(&str, &str)] = &[
+    ("library.import", "destination"),
+    ("app.export", "dir"),
+    ("folder.create", "parent"),
+    ("folder.move", "into"),
+    ("photo.moveToFolder", "folder"),
+    ("photo.editExternal", "dir"),
+];
 
 /// Check the first cell of each row of `rows`, a list of `[path, …]`: the cells after it (a size) are
 /// not paths. A row that isn't a list with a path in front is refused, not skipped.

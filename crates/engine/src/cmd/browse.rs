@@ -295,7 +295,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 refuse_protected_place("folder.move", &from)?;
                 crate::file_access::check_write(&from).map_err(|e| bad("folder.move", e))?;
                 let into = str_param(p, "into").ok_or_else(|| bad("folder.move", "missing into"))?;
-                crate::file_access::check_write(into).map_err(|e| bad("folder.move", e))?;
+                crate::file_access::check_write_container(into).map_err(|e| bad("folder.move", e))?;
                 let name = Path::new(&from).file_name().ok_or_else(|| bad("folder.move", "bad path"))?;
                 let to = Path::new(into).join(name).to_string_lossy().to_string();
                 crate::file_access::check_write(&to).map_err(|e| bad("folder.move", e))?;
@@ -348,6 +348,7 @@ pub fn specs() -> Vec<CommandSpec> {
 /// a temporary name). Missing parents of `to` are created.
 pub(crate) fn rename_folder_on_disk(from: &str, to: &str) -> std::result::Result<(), String> {
     crate::file_access::check_write(from)?;
+    crate::file_access::check_movable(from)?;
     crate::file_access::check_write(to)?;
     let (src, dst) = (Path::new(from), Path::new(to));
     if !src.is_dir() {
@@ -382,6 +383,7 @@ pub(crate) fn rename_folder_on_disk(from: &str, to: &str) -> std::result::Result
 pub(crate) fn folder_on_disk(from: &str, to: &str) -> std::result::Result<(), String> {
     if !from.is_empty() {
         crate::file_access::check_write(from)?;
+        crate::file_access::check_movable(from)?;
     }
     if !to.is_empty() {
         crate::file_access::check_write(to)?;
@@ -449,7 +451,7 @@ fn create_folder(s: &mut Session, p: &Value) -> Result<Value> {
 fn move_to_folder(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photo.moveToFolder";
     let folder = folder_param(p, "folder").ok_or_else(|| bad(C, "missing folder"))?;
-    crate::file_access::check_write(folder).map_err(|e| bad(C, e))?;
+    crate::file_access::check_write_container(folder).map_err(|e| bad(C, e))?;
     let dir = Path::new(folder);
     if !dir.is_dir() {
         return Err(bad(C, format!("{folder} is not a folder (create it first with folder.create)")));
@@ -549,6 +551,7 @@ fn follow_library_folder(chosen: &mut Option<String>, from: &str, to: &str) {
 /// paths, redo repeats the move — each refused (and reported) when the destination is taken.
 pub(crate) fn move_folder(s: &mut Session, from: &str, to: &str) -> std::result::Result<usize, String> {
     crate::file_access::check_write(from)?;
+    crate::file_access::check_movable(from)?;
     crate::file_access::check_write(to)?;
     let (src, dst) = (Path::new(from), Path::new(to));
     if !src.is_dir() {
