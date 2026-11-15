@@ -79,11 +79,16 @@ fn cube_files(paths: &[String]) -> (Vec<(String, String, Option<String>)>, Vec<V
     let mut failed = Vec::new();
     let stem = |f: &Path| f.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     for p in paths {
+        let path = Path::new(p);
+        // (a camera profile is asked about, and reported, by its own import)
+        let camera_profile = path.extension().is_some_and(|x| x.eq_ignore_ascii_case("dcp"));
+        if camera_profile {
+            continue;
+        }
         if let Err(e) = crate::file_access::check_read(p) {
             failed.push(json!([stem(Path::new(p)), e]));
             continue;
         }
-        let path = Path::new(p);
         if path.is_dir() {
             let cube = |f: &Path| f.extension().is_some_and(|x| x.eq_ignore_ascii_case("cube"));
             for ep in crate::walk::files_in(path, None, crate::walk::Limits::default(), cube).files {
