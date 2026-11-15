@@ -356,6 +356,8 @@ fn walk(tag: &str, read: bool, write: bool) -> Vec<String> {
     let sent: Vec<String> = reads.iter().chain(&writes).map(|t| t.to_string()).collect();
     let targets = reads.iter().map(|t| (READ_NAMES, t)).chain(writes.iter().map(|t| (WRITE_NAMES, t)));
     for (names, target) in targets {
+        // (a pass ends with the commands that delete the photo: the next target starts with it back)
+        let _ = mcp.tool("import", json!({"paths": [photo.to_string_lossy()]}));
         for id in &ids {
             let params = path_params(names, target);
             let r = mcp.tool("run_command", json!({"command": id, "params": params}));
