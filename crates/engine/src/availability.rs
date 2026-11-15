@@ -198,12 +198,13 @@ impl Availability {
     fn sweep_checked(&self, epoch: Option<u64>, paths: Vec<String>) -> bool {
         let Some(wake) = &self.background else { return false };
         let mut st = lock(&self.state);
+        // (first: a change of roots drops what was queued for the old ones, and must not drop this sweep with it)
+        let scope = crate::file_access::handoff();
+        st.adopt(&scope);
         if !st.sweep.is_empty() || epoch.is_some_and(|e| e != st.sweep_epoch) {
             return false;
         }
         st.sweep = paths.into();
-        let scope = crate::file_access::handoff();
-        st.adopt(&scope);
         st.sweep_scope = scope;
         self.start(st, wake);
         true
@@ -415,6 +416,26 @@ mod tests {
         }
         assert_eq!(answer, Some(true), "the path that was asked with its scope is answered");
         assert_eq!(*probed.lock().unwrap(), vec!["/asked".to_string()], "the orphan was never probed");
+    }
+
+    /// A sweep started under other roots than the cache holds is checked, not dropped with the old roots' answers.
+    #[test]
+    fn a_sweep_under_new_roots_is_checked_without_a_question_first() {
+        use crate::file_access::{AutomationRoots, confine};
+        let dir = std::env::temp_dir().join(format!("lc-avail-sweep-scope-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let roots = AutomationRoots::new(Some(&dir), Some(&dir)).unwrap().unwrap();
+        let probed = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = probed.clone();
+        let mut a = Availability::default();
+        a.set_probe(Arc::new(move |p| {
+            seen.lock().unwrap().push(p.to_string());
+            true
+        }));
+        a.run_in_background(Arc::new(|| {}));
+        assert!(confine(Some(&roots), || a.sweep(vec!["/swept/one.jpg".into(), "/swept/two.jpg".into()])), "the sweep starts");
+        wait_until("the swept paths are checked", || probed.lock().unwrap().len() == 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

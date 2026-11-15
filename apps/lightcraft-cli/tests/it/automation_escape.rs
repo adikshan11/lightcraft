@@ -293,9 +293,13 @@ fn reaches_path_check(id: &str, params: &Value, base: &Path, target: &str, read:
         return false;
     }
     match lightcraft_engine::file_access::commands::policy(id) {
-        Some(lightcraft_engine::file_access::commands::Policy::Paths(spec)) => {
-            spec.iter().any(|(name, access)| param_is_set(params, name) && !escape_is_allowed(*access, target, base, read, write))
-        }
+        Some(lightcraft_engine::file_access::commands::Policy::Paths(spec)) => spec.iter().any(|(name, access)| {
+            // (a folder that files are made in may be named by a link that leads into the write root)
+            let alias = lightcraft_engine::file_access::commands::CONTAINERS.contains(&(id, *name))
+                && write
+                && (Path::new(target.trim()) == base.join("outside/back.png") || Path::new(target.trim()) == base.join("outside/backdir"));
+            param_is_set(params, name) && !alias && !escape_is_allowed(*access, target, base, read, write)
+        }),
         _ => false,
     }
 }

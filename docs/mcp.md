@@ -70,6 +70,9 @@ The rules:
   Imported LUT looks are registered for the whole process under their id. A session whose roots refuse its own
   copy of a look does not remove another session's registration of the same id, so two sessions in one process that
   import looks of one name share that look.
+  A network drive that the operator mapped to a letter is a drive to the roots: telling it from a local one needs a system
+  call this crate does not make. A path written as a share (`\\host\share`) is judged as written and refused unless a root is
+  on that share.
 - **A path outside the roots looks the same whether or not it is there.** The error does not say the configured
   folders, and it does not say that an outside folder is missing.
 - **Links are followed before a path is judged.** Both the roots and every path are resolved first, so `..`, a link to a
