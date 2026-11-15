@@ -74,7 +74,7 @@ const PATHS: &[(&str, &[(&str, Access)])] = &[
     ("print.template.import", &[("path", Read)]),
     ("profile.import", &[("paths", Read)]),
     ("slideshow.export", &[("path", Write)]),
-    ("slideshow.overlays", &[("identityPlate.image", Read)]),
+    ("slideshow.overlays", &[("identityPlate.image", Read), ("watermark.image", Read)]),
     ("slideshow.preview", &[("path", Write)]),
     ("slideshow.templates.export", &[("path", Write)]),
     ("slideshow.templates.import", &[("path", Read)]),
