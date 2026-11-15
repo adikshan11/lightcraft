@@ -761,6 +761,10 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
             continue;
         }
         let path = crate::smart::sharded_file_path(&dir, &ph);
+        // (a shard folder of a custom folder may be a link out of it: each file is judged where it lies)
+        if s.smart_previews_dir.is_some() {
+            crate::file_access::check_write(&path).map_err(|e| bad(C, e))?;
+        }
         // (a smart preview keeps the file's own colour: never built with the photo's imported camera profile, nor
         // from a cached source developed with it)
         let source = (!discard).then(|| s.media.source_ref_without_profile(&ph, crate::media::SourceLevel::Preview));

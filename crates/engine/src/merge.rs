@@ -95,6 +95,8 @@ pub struct MergeJob {
     /// `Some(edge)`: preview at that frame size; `None`: the full-resolution merge.
     pub preview: Option<usize>,
     pub read: ByteReader,
+    /// The roots in force where the merge was planned: every read runs under them, on whichever thread runs the job.
+    roots: crate::file_access::Handoff,
 }
 
 /// What a merge produced.
@@ -116,13 +118,13 @@ fn err(e: impl std::fmt::Display) -> String {
 }
 
 impl MergeJob {
-    /// Read and decode every source, in parallel for a preview, each read under the roots in force here.
+    /// Read and decode every source, in parallel for a preview, each read under the roots the job was planned with.
     fn load(&self, orient: bool, progress: &ProgressFn, span: (f32, f32)) -> std::result::Result<Vec<Frame>, String> {
         use rayon::prelude::*;
         let done = std::sync::atomic::AtomicUsize::new(0);
         let n = self.sources.len();
-        // the preview's workers have no roots of their own: they read under the ones in force here
-        let roots = crate::file_access::handoff();
+        // the preview's workers have no roots of their own: they read under the ones the job was planned with
+        let roots = self.roots.clone();
         let one = |(_, path): &(PhotoId, String)| {
             let bytes = roots.run(|| (self.read)(path))?;
             // a raw without colour matrices of its own starts from the colour it has when opened alone (#965)
@@ -443,7 +445,7 @@ impl Session {
         }
         let host = self.media.file_bytes.clone();
         let read: ByteReader = Arc::new(move |path: &str| read_file(host.as_ref(), path));
-        Ok(MergeJob { kind, finish, sources, preview: preview.then_some(PREVIEW_EDGE), read })
+        Ok(MergeJob { kind, finish, sources, preview: preview.then_some(PREVIEW_EDGE), read, roots: crate::file_access::handoff() })
     }
 
     /// Write a finished (non-preview) merge next to its first source, import it, select it and

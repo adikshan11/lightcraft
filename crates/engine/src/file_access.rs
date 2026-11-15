@@ -121,7 +121,12 @@ impl AutomationRoots {
         self.check_location(path, Access::Write)?;
         self.check_location(placed, Access::Write)?;
         // one entry named twice is no pair: its other name, if it has one, is somebody else's
-        let one_entry = path == placed || std::fs::canonicalize(path).ok().is_some_and(|a| std::fs::canonicalize(placed).ok() == Some(a));
+        // (a link to the source is judged below as one: it is a link, not a second name, whatever it resolves to)
+        let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+        let one_entry = path == placed
+            || (!is_link(path)
+                && !is_link(placed)
+                && std::fs::canonicalize(path).ok().is_some_and(|a| std::fs::canonicalize(placed).ok() == Some(a)));
         if one_entry {
             return one_name(path);
         }
