@@ -727,7 +727,7 @@ fn run_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
                 }
             }
             if let Some(dest) = args.get("destination").and_then(Value::as_str).filter(|d| !d.trim().is_empty())
-                && let Err(e) = lightcraft_engine::file_access::check_write(dest)
+                && let Err(e) = lightcraft_engine::file_access::check_write_container(dest)
             {
                 return ToolResult::error(e);
             }

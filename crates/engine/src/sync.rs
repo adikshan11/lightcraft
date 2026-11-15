@@ -255,7 +255,9 @@ pub fn scan_with(input: SyncInput, progress: &SyncProgress) -> FolderChanges {
     let (out, checks) = std::thread::scope(|sc| {
         let photos = &photos;
         let labels = &labels;
-        let checks = sc.spawn(move || check_photos(photos, labels, listing, progress));
+        // (the checker thread is under the roots of the thread that asked)
+        let roots = crate::file_access::handoff();
+        let checks = sc.spawn(move || roots.run(|| check_photos(photos, labels, listing, progress)));
         let out = crate::import::scan_files(scan, files, &progress.files);
         // (a check that panicked counts as nothing found; the scan still reports the rest)
         (out, checks.join().unwrap_or_default())
@@ -543,17 +545,20 @@ fn check_photos(photos: &[(Arc<Photo>, SidecarLookup)], labels: &Catalog, listin
         if n > 1 {
             let next = std::sync::atomic::AtomicUsize::new(0);
             let found = std::sync::Mutex::new(vec![Check::Nothing; photos.len()]);
+            let roots = crate::file_access::handoff();
             std::thread::scope(|sc| {
                 for _ in 0..n {
                     sc.spawn(|| {
-                        while !cancel.load(Relaxed) {
-                            let i = next.fetch_add(1, Relaxed);
-                            let Some((p, naming)) = photos.get(i) else { break };
-                            let c = check(p, *naming);
-                            if let Some(slot) = found.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_mut(i) {
-                                *slot = c;
+                        roots.run(|| {
+                            while !cancel.load(Relaxed) {
+                                let i = next.fetch_add(1, Relaxed);
+                                let Some((p, naming)) = photos.get(i) else { break };
+                                let c = check(p, *naming);
+                                if let Some(slot) = found.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_mut(i) {
+                                    *slot = c;
+                                }
                             }
-                        }
+                        })
                     });
                 }
             });
@@ -604,7 +609,7 @@ fn sidecar_has_news(labels: &Catalog, p: &Photo, naming: SidecarLookup, listing:
     // (a name the listing holds is read for its date next, and one that can't be read is passed
     // over for the next name, as a name that is no file was)
     let found = naming.candidates(path).find_map(|c| {
-        let there = listing.or_ask(listing.is_file(&c), || c.is_file());
+        let there = listing.or_ask(listing.is_file(&c), || crate::file_access::may_probe(&c) && c.is_file());
         let meta = there.then(|| std::fs::metadata(&c).ok()).flatten().filter(std::fs::Metadata::is_file)?;
         Some((c, meta))
     });

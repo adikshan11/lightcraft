@@ -62,16 +62,20 @@ pub fn register_all(s: &mut Session, profiles: Option<&Path>) {
     let loaded: Vec<(String, LoadedCameraProfile)> = s
         .dcp_profiles
         .iter()
-        .filter_map(|p| read_allowed(profiles, Path::new(&p.file)).ok().and_then(|b| LoadedCameraProfile::parse(&b).ok()).map(|d| (p.id.clone(), d)))
+        .filter_map(|p| {
+            read_allowed(s, profiles, Path::new(&p.file)).ok().and_then(|b| LoadedCameraProfile::parse(&b).ok()).map(|d| (p.id.clone(), d))
+        })
         .collect();
     s.media.camera_profiles = loaded.into_iter().collect();
 }
 
 /// Whether `file` is the library's own copy: directly in its profiles folder `dir`, neither of them a link. The operator
 /// chose the library, so it isn't confined, wherever the automation roots are; a link there is judged like any other path.
-pub(super) fn library_owned(dir: Option<&Path>, file: &Path) -> bool {
+pub(super) fn library_owned(s: &Session, dir: Option<&Path>, file: &Path) -> bool {
     let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+    // (and the library folder is still the one that was opened: swapped for a link out of the roots, nothing in it is the library's own)
     dir.is_some_and(|d| file.parent() == Some(d) && !is_link(d) && !is_link(file))
+        && s.library.as_ref().is_none_or(crate::library::Library::folder_unchanged)
 }
 
 /// Whether the profile file `file` may be written or removed, with `dir` the library's profiles folder.
@@ -79,26 +83,26 @@ pub(super) fn library_owned(dir: Option<&Path>, file: &Path) -> bool {
 /// The library's own copy always may. Writing renames a new file over the name and removing drops
 /// the name, so a second name of the file, which may lie outside the roots, keeps its bytes; only
 /// reading a file with a second name is refused ([`read_allowed`]).
-pub(super) fn write_allowed(dir: Option<&Path>, file: &Path) -> std::result::Result<(), String> {
-    if library_owned(dir, file) { Ok(()) } else { crate::file_access::check_write(file) }
+pub(super) fn write_allowed(s: &Session, dir: Option<&Path>, file: &Path) -> std::result::Result<(), String> {
+    if library_owned(s, dir, file) { Ok(()) } else { crate::file_access::check_write(file) }
 }
 
 /// Write `bytes` as the profile file `file` in the library's profiles folder `dir`, if [`write_allowed`] says so.
 ///
 /// The folder is recorded before the question is asked and the write goes through that record, which refuses once the
 /// name `dir` leads somewhere else: what was judged is the folder written to, never a path looked up again.
-pub(super) fn write_profile(dir: &Path, file: &Path, bytes: &[u8]) -> std::result::Result<(), String> {
+pub(super) fn write_profile(s: &Session, dir: &Path, file: &Path, bytes: &[u8]) -> std::result::Result<(), String> {
     use lightcraft_catalog::store::Store;
     let name = file.file_name().and_then(|n| n.to_str()).ok_or_else(|| "not a file name".to_string())?;
     let mut folder = lightcraft_catalog::store::FsStore::open(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    write_allowed(Some(dir), file)?;
+    write_allowed(s, Some(dir), file)?;
     folder.write_atomic(name, bytes).map_err(|e| e.to_string())
 }
 
 /// The bytes of the profile file `file`, with `dir` the library's profiles folder; outside the automation roots a file
 /// that isn't the library's own counts as missing.
-fn read_allowed(dir: Option<&Path>, file: &Path) -> std::io::Result<Vec<u8>> {
-    if library_owned(dir, file) {
+fn read_allowed(s: &Session, dir: Option<&Path>, file: &Path) -> std::io::Result<Vec<u8>> {
+    if library_owned(s, dir, file) {
         crate::file_access::reject_other_names(file).map_err(std::io::Error::other)?;
     } else {
         // (the library may be opening unconfined: a file elsewhere is still judged by the process's roots)
@@ -141,7 +145,7 @@ pub fn import_files(s: &mut Session, paths: &[String]) -> Result<(Vec<Value>, Ve
     let (mut imported, mut failed) = (Vec::new(), Vec::new());
     for f in dcp_files(paths) {
         let shown = f.display().to_string();
-        let bytes = match read_allowed(dir.as_deref(), &f) {
+        let bytes = match read_allowed(s, dir.as_deref(), &f) {
             Ok(b) => b,
             Err(e) => {
                 failed.push(json!([shown, e.to_string()]));
@@ -160,7 +164,7 @@ pub fn import_files(s: &mut Session, paths: &[String]) -> Result<(Vec<Value>, Ve
         let name = if profile.name.trim().is_empty() { stem.clone() } else { profile.name.trim().to_string() };
         // the same profile imported again: keep the one there is
         let same = s.dcp_profiles.iter().find(|p| {
-            p.name == name && p.camera_model == profile.camera_model && read_allowed(dir.as_deref(), Path::new(&p.file)).is_ok_and(|b| b == bytes)
+            p.name == name && p.camera_model == profile.camera_model && read_allowed(s, dir.as_deref(), Path::new(&p.file)).is_ok_and(|b| b == bytes)
         });
         if let Some(p) = same {
             imported.push(json!({"id": p.id, "name": p.name, "cameraModel": p.camera_model, "existing": true}));
@@ -179,7 +183,7 @@ pub fn import_files(s: &mut Session, paths: &[String]) -> Result<(Vec<Value>, Ve
                 let to = d.join(format!("{}.dcp", id.trim_start_matches(DCP_PREFIX)));
                 // a copy that fails (disk full, no access, refused) fails this file only: the profiles
                 // copied before it stay imported, and nothing half-written is left behind
-                if let Err(e) = write_profile(d, &to, &bytes) {
+                if let Err(e) = write_profile(s, d, &to, &bytes) {
                     failed.push(json!([shown, format!("{}: {e}", to.display())]));
                     continue;
                 }
@@ -211,7 +215,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         && !Path::new(&entry.file).components().any(|c| c == std::path::Component::ParentDir)
     {
         // (a `Profiles` folder that is a link isn't the library's own: it may lead out of the automation roots)
-        write_allowed(Some(&d), Path::new(&entry.file)).map_err(|e| bad(C, format!("{}: {e}", entry.file)))?;
+        write_allowed(s, Some(&d), Path::new(&entry.file)).map_err(|e| bad(C, format!("{}: {e}", entry.file)))?;
         match std::fs::remove_file(&entry.file) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -247,4 +251,28 @@ pub fn specs() -> Vec<CommandSpec> {
             delete
         ),
     ]
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// The library's own exemption ends when its folder is swapped for a link to another place while it is open.
+    #[test]
+    fn a_library_folder_swapped_for_a_link_is_no_longer_the_librarys_own() {
+        let base = std::env::temp_dir().join(format!("lc-dcp-swap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (lib, elsewhere) = (base.join("lib"), base.join("elsewhere"));
+        std::fs::create_dir_all(elsewhere.join("Profiles")).unwrap();
+        std::fs::create_dir_all(&lib).unwrap();
+        let mut s = Session::new().with_fs();
+        s.open_library(&lib, false).unwrap();
+        let (dir, file) = (lib.join("Profiles"), lib.join("Profiles").join("a.dcp"));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(library_owned(&s, Some(&dir), &file), "the folder that was opened");
+        std::fs::rename(&lib, base.join("moved")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &lib).unwrap();
+        assert!(!library_owned(&s, Some(&dir), &file), "a link to somewhere else now stands at its name");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

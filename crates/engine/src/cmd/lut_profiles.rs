@@ -31,6 +31,23 @@ fn owners() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>>
     OWNERS.get_or_init(Default::default)
 }
 
+/// Register `lut` under `id` for session `s` and note that it is the session's, as one step under the owners' lock.
+fn publish(s: &Session, id: &str, lut: lightcraft_pipeline::lut::Lut3d) {
+    let mut owned = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    lightcraft_pipeline::lut::register(id, lut);
+    owned.insert(id.to_string(), s.session_id);
+}
+
+/// Take `id` out of the process-wide registry unless another session owns it; the check, the owner record and the removal
+/// are one step under the owners' lock.
+fn withdraw(s: &Session, id: &str) {
+    let mut owned = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if owned.get(id).is_none_or(|o| *o == s.session_id) {
+        owned.remove(id);
+        lightcraft_pipeline::lut::unregister(id);
+    }
+}
+
 /// Register every imported profile's LUT with the pipeline (missing files are skipped).
 ///
 /// `profiles` is the `Profiles/` folder of the library being opened; another file outside the automation roots counts as
@@ -38,7 +55,7 @@ fn owners() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>>
 pub fn register_all(s: &Session, profiles: Option<&Path>) {
     for p in &s.lut_profiles {
         let file = Path::new(&p.file);
-        let allowed = if super::dcp_profiles::library_owned(profiles, file) {
+        let allowed = if super::dcp_profiles::library_owned(s, profiles, file) {
             crate::file_access::reject_other_names(file).is_ok()
         } else {
             // (the library may be opening unconfined: a file elsewhere is still judged by the process's roots)
@@ -46,19 +63,10 @@ pub fn register_all(s: &Session, profiles: Option<&Path>) {
         };
         let lut = allowed.then(|| std::fs::read_to_string(&p.file).ok().and_then(|t| lightcraft_pipeline::lut::Lut3d::parse_cube(&t).ok())).flatten();
         match lut {
-            Some(l) => {
-                lightcraft_pipeline::lut::register(&p.id, l);
-                owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(p.id.clone(), s.session_id);
-            }
+            Some(l) => publish(s, &p.id, l),
             // The registry is the whole process's: take out only what this session put there (or nobody did), so
             // one session's refusal cannot unregister a LUT another session registered under the same id.
-            None => {
-                let mut owned = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                if owned.get(&p.id).is_none_or(|o| *o == s.session_id) {
-                    owned.remove(&p.id);
-                    lightcraft_pipeline::lut::unregister(&p.id);
-                }
-            }
+            None => withdraw(s, &p.id),
         }
     }
 }
@@ -168,7 +176,7 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
                 let f = d.join(format!("{}.cube", id.trim_start_matches("lut:")));
                 // a new file renamed into place: an entry already under the name (a link planted
                 // in the Profiles folder) is replaced, never written through
-                if let Err(e) = super::dcp_profiles::write_profile(d, &f, text.as_bytes()) {
+                if let Err(e) = super::dcp_profiles::write_profile(s, d, &f, text.as_bytes()) {
                     failed.push(json!([name, format!("{}: {e}", f.display())]));
                     continue;
                 }
@@ -178,8 +186,7 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
             // be read back when a library opens, and that takes its own list from its prefs)
             None => String::new(),
         };
-        lightcraft_pipeline::lut::register(&id, lut);
-        owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id.clone(), s.session_id);
+        publish(s, &id, lut);
         s.lut_profiles.push(LutProfile { id: id.clone(), name: display.clone(), group: group.clone(), file });
         imported.push(json!({"id": id, "name": display, "group": group}));
     }
@@ -216,13 +223,13 @@ pub fn specs() -> Vec<CommandSpec> {
             let dir = profiles_dir(s).filter(|d| Path::new(&s.lut_profiles[i].file).starts_with(d));
             if let Some(d) = &dir {
                 let file = &s.lut_profiles[i].file;
-                super::dcp_profiles::write_allowed(Some(d), Path::new(file)).map_err(|e| bad("profile.deleteImported", format!("{file}: {e}")))?;
+                super::dcp_profiles::write_allowed(s, Some(d), Path::new(file)).map_err(|e| bad("profile.deleteImported", format!("{file}: {e}")))?;
             }
             let gone = s.lut_profiles.remove(i);
             if dir.is_some() {
                 let _ = std::fs::remove_file(&gone.file);
             }
-            lightcraft_pipeline::lut::unregister(&id);
+            withdraw(s, &id);
             s.save_prefs()?;
             crate::profile_refs::refresh(s);
             Ok(json!({"deleted": id}))

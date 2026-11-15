@@ -15,6 +15,8 @@ use super::binary;
 
 /// In a file outside the roots, and in the names of files there: a reply showing one has read it.
 const SECRET: &str = "SECRETCANARY";
+/// The name of a file out there that no call names, so it only appears in a reply that lists the folder.
+const UNSENT: &str = "UNSENTLISTINGNAME";
 
 /// Parameter and tool argument names that name a file or folder, as a command might spell them.
 const READ_NAMES: &[&str] = &["path", "paths", "folder", "file", "files", "source", "dataset", "image", "listing"];
@@ -168,6 +170,8 @@ fn folders(tag: &str) -> PathBuf {
     png(&base.join(format!("outside/{SECRET}.png")));
     png(&base.join(format!("outside/sub/{SECRET}2.png")));
     std::fs::write(base.join(format!("outside/{SECRET}.png.xmp")), format!("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">{SECRET}</x:xmpmeta>")).unwrap();
+    // a name no call ever sends: a reply that shows it listed what is out there
+    std::fs::write(base.join(format!("outside/{UNSENT}.txt")), b"never named by a call").unwrap();
     std::fs::write(base.join("outside/config.json"), format!("{{\"secret\": \"{SECRET}\"}}")).unwrap();
     #[cfg(unix)]
     {
@@ -305,6 +309,7 @@ fn leaks(reply: &Value, sent: &[String]) -> bool {
         rest = rest.replace(asked.trim_matches('"'), "");
     }
     rest.contains(SECRET)
+        || reply.contains(UNSENT)
         || reply.contains(&format!("{SECRET}2"))
         || reply.contains(&format!("\\\"secret\\\": \\\"{SECRET}"))
         || reply.contains(&format!("xmpmeta>{SECRET}"))
@@ -327,8 +332,13 @@ fn walk(tag: &str, read: bool, write: bool) -> Vec<String> {
     let text = listed["result"]["content"][0]["text"].as_str().unwrap().to_string();
     let commands: Value = serde_json::from_str(&text).unwrap();
     let listed_commands = commands.as_array().or(commands["commands"].as_array()).unwrap();
-    let mut ids: Vec<String> =
-        listed_commands.iter().filter_map(|c| c["id"].as_str().map(str::to_string)).filter(|id| !NOT_WALKED.contains(&id.as_str())).collect();
+    let mut ids: Vec<String> = listed_commands
+        .iter()
+        .filter_map(|c| c["id"].as_str().map(str::to_string))
+        .filter(|id| !NOT_WALKED.contains(&id.as_str()))
+        // (adds the photo to the system's Photos library: only where the roots refuse it is it walked)
+        .filter(|id| read || write || id != "export.addToPhotos")
+        .collect();
     assert!(ids.len() > 300, "the registry: {}", ids.len());
     // those that take the photo away last, so the others have one to work on
     ids.sort_by_key(|id| ["delete", "remove", "forget", "empty"].iter().any(|w| id.to_lowercase().contains(w)));
