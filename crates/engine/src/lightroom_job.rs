@@ -78,6 +78,8 @@ pub struct PreparedLightroom {
     pub(crate) missing_sources: HashSet<String>,
     pub(crate) update_existing: bool,
     pub(crate) now: String,
+    /// The library folder as it was opened, asked again right before the index is written.
+    library_folder: Option<lightcraft_catalog::OpenedFolder>,
     cancelled: bool,
 }
 
@@ -109,6 +111,8 @@ impl PreparedLightroom {
 pub struct LightroomArchiveFinalization {
     path: Option<PathBuf>,
     bytes: Option<Vec<u8>>,
+    /// The library folder as it was opened: the index is written only while the path still leads to it.
+    folder: Option<lightcraft_catalog::OpenedFolder>,
 }
 
 impl LightroomArchiveFinalization {
@@ -117,7 +121,16 @@ impl LightroomArchiveFinalization {
         if bytes.len() > MAX_INDEX_BYTES {
             return Err(error("Lightroom import index exceeds 16 MiB"));
         }
-        lightcraft_catalog::safe_file::write_atomic(&path, &bytes).map_err(|e| error(e.to_string()))
+        if let Some(folder) = &self.folder {
+            folder.check().map_err(|e| error(e.to_string()))?;
+        }
+        // through a store recorded for the Interop folder right now, which refuses a write once the name leads elsewhere
+        use lightcraft_catalog::Store;
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else {
+            return Err(error("the index has no folder"));
+        };
+        let mut store = lightcraft_catalog::FsStore::open(dir).map_err(|e| error(e.to_string()))?;
+        store.write_atomic(name, &bytes).map_err(|e| error(e.to_string()))
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -250,6 +263,11 @@ impl LightroomJob {
         if cancel.load(Ordering::Relaxed) {
             return Err(cancelled());
         }
+        // (the library's Interop folder is the library's own only while its folder is still the one that was opened: asked
+        // before anything is extracted into it)
+        if let Some(f) = &self.library_folder {
+            f.check().map_err(|e| error(e.to_string()))?;
+        }
         // (reading stops with a message when `cancel` is set: the flag says it was cancelled)
         let mut data = lightroom_catalog::read_source(
             &self.path,
@@ -275,10 +293,6 @@ impl LightroomJob {
             normal.rollback();
             return Err(cancelled());
         }
-        // (the library's Interop folder is the library's own only while its folder is still the one that was opened)
-        if let Some(f) = &self.library_folder {
-            f.check().map_err(|e| error(e.to_string()))?;
-        }
         let archive_path = stage_archive(self.archive_dir.as_deref(), &mut data)?;
         let index = lightroom_catalog::load_index(self.archive_dir.as_deref(), self.library_folder.as_ref())?;
         Ok(PreparedLightroom {
@@ -290,6 +304,7 @@ impl LightroomJob {
             missing_sources,
             update_existing: self.update_existing,
             now: self.import.now().to_string(),
+            library_folder: self.library_folder.clone(),
             cancelled: cancel.load(Ordering::Relaxed),
         })
     }
@@ -330,7 +345,10 @@ pub fn commit_prepared(s: &mut crate::Session, mut prepared: PreparedLightroom) 
     )?;
     let path = prepared.token.library_dir().map(|dir| dir.join("Interop").join(crate::lightroom_catalog::INDEX_FILE));
     let bytes = if path.is_some() { Some(serde_json::to_vec(&applied.index).map_err(|e| error(e.to_string()))?) } else { None };
-    Ok(LightroomCompletion { report: applied.report, finalization: LightroomArchiveFinalization { path, bytes } })
+    Ok(LightroomCompletion {
+        report: applied.report,
+        finalization: LightroomArchiveFinalization { path, bytes, folder: prepared.library_folder.clone() },
+    })
 }
 
 fn original_paths(data: &CatalogImport, cancel: &AtomicBool) -> crate::Result<(Vec<String>, HashSet<String>)> {
@@ -390,6 +408,7 @@ mod tests {
             missing_sources: HashSet::new(),
             update_existing: false,
             now: "2026-01-01T00:00:00".into(),
+            library_folder: None,
             cancelled: true,
         }
     }
@@ -432,6 +451,7 @@ mod tests {
             missing_sources: [normalize(path)].into_iter().collect(),
             update_existing: false,
             now: "2026-01-01T00:00:00".into(),
+            library_folder: None,
             cancelled: false,
         }
     }
@@ -574,6 +594,7 @@ mod tests {
             missing_sources: HashSet::new(),
             update_existing: false,
             now: "2026-01-01T00:00:00".into(),
+            library_folder: None,
             cancelled: false,
         };
         let completion = commit_prepared(&mut session, prepared).unwrap();
