@@ -136,6 +136,10 @@ fn walk(
     mut note: Option<NoteFolder>,
 ) -> Walked {
     let mut out = Walked::default();
+    // (nothing about a root the roots refuse is asked of the disk, not even where it leads)
+    if crate::file_access::check_read(root).is_err() {
+        return out;
+    }
     // canonical folders reached through a link, so a link loop is walked at most once
     let mut linked: HashSet<PathBuf> = HashSet::new();
     if let Ok(c) = std::fs::canonicalize(root) {
