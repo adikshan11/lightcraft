@@ -1012,7 +1012,8 @@ mod tests {
         std::fs::remove_file(&extra).unwrap();
         std::fs::hard_link(&file, &placed_name).unwrap();
         assert_eq!(roots.check_write_pair(&file, &placed_name), Ok(()), "two hard-link names are a pair");
-        assert!(roots.check_write_pair(&file, &file).is_err(), "one entry named twice is no pair, whatever its link count");
+        let refused = roots.check_write_pair(&file, &file).unwrap_err();
+        assert!(refused.contains("more than one name"), "one entry named twice is no pair, whatever its link count: {refused}");
         let _ = std::fs::remove_dir_all(base);
     }
 
