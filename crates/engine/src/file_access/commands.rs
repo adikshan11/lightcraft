@@ -455,16 +455,6 @@ pub fn check_command(id: &str, params: &Value) -> Result<(), String> {
                     at = at.and_then(|v| v.get(part));
                 }
                 match (at, first_cells) {
-                    // a folder that new files are made in: a link to one is judged by where it leads
-                    (Some(Value::String(dir)), false) if CONTAINERS.contains(&(id, name)) => {
-                        if !dir.is_empty() {
-                            super::check_write_container(dir)?;
-                            let trimmed = dir.trim();
-                            if trimmed != dir && !trimmed.is_empty() {
-                                super::check_write_container(trimmed)?;
-                            }
-                        }
-                    }
                     (Some(rows), true) => check_rows(rows, *access)?,
                     (Some(value), false) => check_value(value, *access, MAX_DEPTH)?,
                     (None, _) => {}
@@ -474,9 +464,6 @@ pub fn check_command(id: &str, params: &Value) -> Result<(), String> {
         }
     }
 }
-
-/// Parameters (command, name) that name a folder new files are made in, checked as one rather than as a file to write.
-const CONTAINERS: &[(&str, &str)] = &[("library.import", "destination")];
 
 /// Check the first cell of each row of `rows`, a list of `[path, …]`: the cells after it (a size) are
 /// not paths. A row that isn't a list with a path in front is refused, not skipped.
