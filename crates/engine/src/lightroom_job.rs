@@ -552,6 +552,7 @@ mod tests {
         assert_eq!(session.undo.len(), 3);
     }
 
+    /// A history too big to archive leaves the import successful, with a warning.
     #[test]
     fn oversized_history_archive_keeps_prepared_import_successful_with_warning() {
         let archive_dir = std::env::temp_dir().join(format!("lightcraft-lr-prepared-scale-{}", std::process::id()));
