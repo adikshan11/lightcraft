@@ -867,3 +867,27 @@ fn a_denied_lut_leaves_a_registration_that_another_session_made() {
     assert!(lightcraft_pipeline::lut::get(id).is_none(), "the owner's own refusal takes it out");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Importing a LUT records its session, so another session's refusal of the same id leaves it standing.
+#[test]
+fn an_imported_lut_belongs_to_the_session_that_imported_it() {
+    use crate::cmd::lut_profiles::{LutProfile, register_all};
+    use crate::file_access::{AutomationRoots, confine};
+    let base = temp_dir("lut-import-owner");
+    let (root, outside) = (base.join("root"), base.join("outside"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+    let (cube, secret) = (root.join("Imported").join("keep.cube"), outside.join("secret.cube"));
+    std::fs::create_dir_all(cube.parent().unwrap()).unwrap();
+    std::fs::write(&cube, identity_cube()).unwrap();
+    std::fs::write(&secret, identity_cube()).unwrap();
+    let mut first = Session::new().with_fs();
+    confine(Some(&roots), || first.execute("profile.import", &json!({"paths": [cube.to_string_lossy()]}))).unwrap();
+    let Some(id) = first.lut_profiles.first().map(|p| p.id.clone()) else { panic!("the import kept no profile") };
+    let mut second = Session::new().with_fs();
+    second.lut_profiles.push(LutProfile { id: id.clone(), name: id.clone(), group: "Imported".into(), file: secret.to_string_lossy().to_string() });
+    confine(Some(&roots), || register_all(&second, None));
+    assert!(lightcraft_pipeline::lut::get(&id).is_some(), "the importing session's LUT stands");
+    let _ = std::fs::remove_dir_all(&base);
+}

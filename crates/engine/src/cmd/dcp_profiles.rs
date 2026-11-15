@@ -83,6 +83,18 @@ pub(super) fn write_allowed(dir: Option<&Path>, file: &Path) -> std::result::Res
     if library_owned(dir, file) { Ok(()) } else { crate::file_access::check_write(file) }
 }
 
+/// Write `bytes` as the profile file `file` in the library's profiles folder `dir`, if [`write_allowed`] says so.
+///
+/// The folder is recorded before the question is asked and the write goes through that record, which refuses once the
+/// name `dir` leads somewhere else: what was judged is the folder written to, never a path looked up again.
+pub(super) fn write_profile(dir: &Path, file: &Path, bytes: &[u8]) -> std::result::Result<(), String> {
+    use lightcraft_catalog::store::Store;
+    let name = file.file_name().and_then(|n| n.to_str()).ok_or_else(|| "not a file name".to_string())?;
+    let mut folder = lightcraft_catalog::store::FsStore::open(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    write_allowed(Some(dir), file)?;
+    folder.write_atomic(name, bytes).map_err(|e| e.to_string())
+}
+
 /// The bytes of the profile file `file`, with `dir` the library's profiles folder; outside the automation roots a file
 /// that isn't the library's own counts as missing.
 fn read_allowed(dir: Option<&Path>, file: &Path) -> std::io::Result<Vec<u8>> {
@@ -165,13 +177,9 @@ pub fn import_files(s: &mut Session, paths: &[String]) -> Result<(Vec<Value>, Ve
         let file = match &dir {
             Some(d) => {
                 let to = d.join(format!("{}.dcp", id.trim_start_matches(DCP_PREFIX)));
-                if let Err(e) = write_allowed(Some(d), &to) {
-                    failed.push(json!([shown, format!("{}: {e}", to.display())]));
-                    continue;
-                }
-                // a copy that fails (disk full, no access) fails this file only: the profiles
+                // a copy that fails (disk full, no access, refused) fails this file only: the profiles
                 // copied before it stay imported, and nothing half-written is left behind
-                if let Err(e) = lightcraft_catalog::safe_file::write_atomic(&to, &bytes) {
+                if let Err(e) = write_profile(d, &to, &bytes) {
                     failed.push(json!([shown, format!("{}: {e}", to.display())]));
                     continue;
                 }

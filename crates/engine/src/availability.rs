@@ -271,7 +271,10 @@ impl Availability {
                     }
                     match st.queue.pop_front() {
                         Some(p) => {
-                            let scope = st.scopes.remove(&p).unwrap_or_default();
+                            // a repeat of a path already taken has no scope left: it is dropped, never run unconfined
+                            let Some(scope) = st.scopes.remove(&p) else {
+                                continue;
+                            };
                             (p, true, scope)
                         }
                         None => loop {
@@ -383,6 +386,34 @@ mod tests {
         assert_eq!(answer, Some(true), "found under the roots");
         assert_eq!(a.exists("/a/file.jpg"), None, "not the answer of a thread that asks with no roots");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A queued path with no recorded scope is dropped, never probed with no roots at all.
+    #[test]
+    fn a_queued_path_without_a_scope_is_not_probed() {
+        let probed = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = probed.clone();
+        let mut a = Availability::default();
+        a.set_probe(Arc::new(move |p| {
+            seen.lock().unwrap().push(p.to_string());
+            true
+        }));
+        a.run_in_background(Arc::new(|| {}));
+        {
+            let mut st = lock(&a.state);
+            st.queued.insert("/orphan".into());
+            st.queue.push_back("/orphan".into());
+        }
+        let mut answer = None;
+        for _ in 0..200 {
+            answer = a.exists("/asked");
+            if answer.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert_eq!(answer, Some(true), "the path that was asked with its scope is answered");
+        assert_eq!(*probed.lock().unwrap(), vec!["/asked".to_string()], "the orphan was never probed");
     }
 
     #[test]

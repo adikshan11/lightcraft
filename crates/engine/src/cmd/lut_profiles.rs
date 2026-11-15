@@ -166,13 +166,12 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
         let file = match &dir {
             Some(d) => {
                 let f = d.join(format!("{}.cube", id.trim_start_matches("lut:")));
-                if let Err(e) = super::dcp_profiles::write_allowed(Some(d), &f) {
+                // a new file renamed into place: an entry already under the name (a link planted
+                // in the Profiles folder) is replaced, never written through
+                if let Err(e) = super::dcp_profiles::write_profile(d, &f, text.as_bytes()) {
                     failed.push(json!([name, format!("{}: {e}", f.display())]));
                     continue;
                 }
-                // a new file renamed into place: an entry already under the name (a link planted
-                // in the Profiles folder) is replaced, never written through
-                lightcraft_catalog::safe_file::write_atomic(&f, text.as_bytes()).map_err(|e| bad(C, format!("{}: {e}", f.display())))?;
                 f.to_string_lossy().to_string()
             }
             // no library on disk: the registered LUT is all this session needs (a copy would only
@@ -180,6 +179,7 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
             None => String::new(),
         };
         lightcraft_pipeline::lut::register(&id, lut);
+        owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id.clone(), s.session_id);
         s.lut_profiles.push(LutProfile { id: id.clone(), name: display.clone(), group: group.clone(), file });
         imported.push(json!({"id": id, "name": display, "group": group}));
     }
