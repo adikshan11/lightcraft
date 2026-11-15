@@ -25,27 +25,15 @@ fn profiles_dir(s: &Session) -> Option<PathBuf> {
     s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("Profiles"))
 }
 
-/// Which session registered each LUT id in the process-wide registry.
-fn owners() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>> {
-    static OWNERS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> = std::sync::OnceLock::new();
-    OWNERS.get_or_init(Default::default)
-}
-
-/// Register `lut` under `id` for session `s` and note that it is the session's, as one step under the owners' lock.
+/// Register `lut` under `id` for session `s`: its renders find it, and another session's that did not register one do not.
 fn publish(s: &Session, id: &str, lut: lightcraft_pipeline::lut::Lut3d) {
-    let mut owned = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    lightcraft_pipeline::lut::register(id, lut);
-    owned.insert(id.to_string(), s.session_id);
+    lightcraft_pipeline::lut::register_for(s.session_id, id, lut);
 }
 
-/// Take `id` out of the process-wide registry unless another session owns it; the check, the owner record and the removal
-/// are one step under the owners' lock.
+/// Take session `s`'s claim on `id` out of the process-wide registry: another session's own registration of the id is
+/// left to it, and `s` itself no longer finds it.
 fn withdraw(s: &Session, id: &str) {
-    let mut owned = owners().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if owned.get(id).is_none_or(|o| *o == s.session_id) {
-        owned.remove(id);
-        lightcraft_pipeline::lut::unregister(id);
-    }
+    lightcraft_pipeline::lut::unregister_for(s.session_id, id);
 }
 
 /// Register every imported profile's LUT with the pipeline (missing files are skipped).

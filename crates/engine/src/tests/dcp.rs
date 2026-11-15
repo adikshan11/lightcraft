@@ -815,10 +815,10 @@ fn deleting_a_hard_linked_library_profile_keeps_the_other_name() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-/// A LUT profile that the roots refuse takes its id out of the registry, which is the whole process's:
-/// an id another library registered must not stand in for it.
+/// A LUT profile that the roots refuse is not found by the session that was refused, though another session registered a
+/// LUT under the same id: that session keeps its own.
 #[test]
-fn a_denied_lut_does_not_leave_another_librarys_registration_standing() {
+fn a_denied_lut_does_not_resolve_another_librarys_registration() {
     use crate::cmd::lut_profiles::{LutProfile, register_all};
     use crate::file_access::{AutomationRoots, confine};
     let base = temp_dir("lut-stale");
@@ -829,12 +829,15 @@ fn a_denied_lut_does_not_leave_another_librarys_registration_standing() {
     let secret = outside.join("secret.cube");
     std::fs::write(&secret, identity_cube()).unwrap();
     let id = "lut:stale-from-another-library";
-    lightcraft_pipeline::lut::register(id, lightcraft_pipeline::lut::Lut3d::parse_cube(&identity_cube()).unwrap());
-    assert!(lightcraft_pipeline::lut::get(id).is_some());
+    let other = 9_000_001;
+    lightcraft_pipeline::lut::register_for(other, id, lightcraft_pipeline::lut::Lut3d::parse_cube(&identity_cube()).unwrap());
     let mut s = Session::new().with_fs();
     s.lut_profiles.push(LutProfile { id: id.into(), name: id.into(), group: "Imported".into(), file: secret.to_string_lossy().to_string() });
     confine(Some(&roots), || register_all(&s, None));
-    assert!(lightcraft_pipeline::lut::get(id).is_none(), "the denied profile took its id out");
+    let found = |session: u64| lightcraft_pipeline::lut::in_scope(Some(session), || lightcraft_pipeline::lut::get(id)).is_some();
+    assert!(!found(s.session_id), "the refused session does not find it");
+    assert!(found(other), "the session that registered it still does");
+    lightcraft_pipeline::lut::unregister(id);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -861,6 +864,8 @@ fn a_denied_lut_leaves_a_registration_that_another_session_made() {
     assert!(lightcraft_pipeline::lut::get(id).is_some(), "the first session registered it");
     confine(Some(&roots), || register_all(&second, None));
     assert!(lightcraft_pipeline::lut::get(id).is_some(), "the second session's refusal left the first one's LUT");
+    let found = |session: u64| lightcraft_pipeline::lut::in_scope(Some(session), || lightcraft_pipeline::lut::get(id)).is_some();
+    assert!(found(first.session_id) && !found(second.session_id), "and only the first session finds it");
     confine(Some(&roots), || register_all(&first, None));
     first.lut_profiles[0].file = secret.to_string_lossy().to_string();
     confine(Some(&roots), || register_all(&first, None));
@@ -889,6 +894,8 @@ fn an_imported_lut_belongs_to_the_session_that_imported_it() {
     second.lut_profiles.push(LutProfile { id: id.clone(), name: id.clone(), group: "Imported".into(), file: secret.to_string_lossy().to_string() });
     confine(Some(&roots), || register_all(&second, None));
     assert!(lightcraft_pipeline::lut::get(&id).is_some(), "the importing session's LUT stands");
+    let found = |session: u64| lightcraft_pipeline::lut::in_scope(Some(session), || lightcraft_pipeline::lut::get(&id)).is_some();
+    assert!(found(first.session_id) && !found(second.session_id), "and only it finds it");
     let _ = std::fs::remove_dir_all(&base);
 }
 

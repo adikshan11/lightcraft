@@ -253,7 +253,7 @@ thread_local! {
 /// has no scope of its own, so work handed to a worker takes this with it ([`Handoff::run`]). Roots
 /// set for the whole process ([`confine_process`]) need none.
 #[derive(Clone, Default)]
-pub(crate) struct Handoff(Option<Arc<AutomationRoots>>);
+pub(crate) struct Handoff(Option<Arc<AutomationRoots>>, Option<u64>);
 
 impl Handoff {
     /// Which roots these are: the same number for the same roots, and none for no roots.
@@ -261,15 +261,16 @@ impl Handoff {
         self.0.as_ref().map_or(0, |r| r.generation)
     }
 
-    /// Run `f` with the roots that were in force when this was made.
+    /// Run `f` with the roots (and the session's LUT scope) that were in force when this was made.
     pub(crate) fn run<T>(&self, f: impl FnOnce() -> T) -> T {
-        confine(self.0.as_ref(), f)
+        // (and the session whose LUTs its renders find)
+        lightcraft_pipeline::lut::in_scope(self.1, || confine(self.0.as_ref(), f))
     }
 }
 
 /// The roots in force on this thread now, ready to hand to a worker.
 pub(crate) fn handoff() -> Handoff {
-    Handoff(current())
+    Handoff(current(), lightcraft_pipeline::lut::current_scope())
 }
 
 /// The roots in force in every thread outside [`confine`] and [`unconfined`].

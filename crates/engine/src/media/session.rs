@@ -539,7 +539,7 @@ impl crate::Session {
     pub fn render_now(&mut self, id: PhotoId, max_w: usize, max_h: usize) -> Result<Rendered, String> {
         lightcraft_pipeline::check_output_size(max_w, max_h)?;
         let job = self.render_job(id, max_w, max_h, false, true).ok_or("no such photo")?;
-        let r = job.run();
+        let r = lightcraft_pipeline::lut::in_scope(Some(self.session_id), || job.run());
         self.accept(&r);
         r.rendered
     }
