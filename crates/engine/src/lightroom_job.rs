@@ -63,6 +63,7 @@ impl LightroomLibraryToken {
             && self.library_dir == s.library.as_ref().filter(|library| library.on_disk).map(|library| library.dir.clone())
     }
 
+    /// The library folder this token was taken for (`None`: no library on disk).
     pub fn library_dir(&self) -> Option<&Path> {
         self.library_dir.as_deref()
     }
@@ -116,6 +117,7 @@ pub struct LightroomArchiveFinalization {
 }
 
 impl LightroomArchiveFinalization {
+    /// Write the import index, if there is one, once the library folder is still the one that was opened.
     pub fn finish(self) -> crate::Result<()> {
         let (Some(path), Some(bytes)) = (self.path, self.bytes) else { return Ok(()) };
         if bytes.len() > MAX_INDEX_BYTES {
