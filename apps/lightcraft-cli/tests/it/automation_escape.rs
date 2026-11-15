@@ -293,12 +293,17 @@ fn reaches_path_check(id: &str, params: &Value, base: &Path, target: &str, read:
     }
 }
 
-/// Replies may name the path they refuse (`target`, as it was asked), never what's in that folder or file,
+/// Replies may name a path the caller sent (`sent`, as it was asked, also when a reply records earlier calls), never what is in that folder or file,
 /// and not the name of anything else out there.
-fn leaks(reply: &Value, target: &str) -> bool {
+fn leaks(reply: &Value, sent: &[String]) -> bool {
     let reply = reply.to_string();
-    let asked = serde_json::to_string(target).unwrap_or_default();
-    let rest = reply.replace(asked.trim_matches('"'), "");
+    // what the caller itself sent comes back in a reply that records it (the journal lists the params of earlier calls):
+    // that is its own words, not what the roots keep from it
+    let mut rest = reply.clone();
+    for target in sent {
+        let asked = serde_json::to_string(target).unwrap_or_default();
+        rest = rest.replace(asked.trim_matches('"'), "");
+    }
     rest.contains(SECRET)
         || reply.contains(&format!("{SECRET}2"))
         || reply.contains(&format!("\\\"secret\\\": \\\"{SECRET}"))
@@ -334,12 +339,13 @@ fn walk(tag: &str, read: bool, write: bool) -> Vec<String> {
         );
     }
     let (reads, writes) = escapes(&base);
+    let sent: Vec<String> = reads.iter().chain(&writes).map(|t| t.to_string()).collect();
     let targets = reads.iter().map(|t| (READ_NAMES, t)).chain(writes.iter().map(|t| (WRITE_NAMES, t)));
     for (names, target) in targets {
         for id in &ids {
             let params = path_params(names, target);
             let r = mcp.tool("run_command", json!({"command": id, "params": params}));
-            if leaks(&r, target) {
+            if leaks(&r, &sent) {
                 found.push(format!("{id} {target}: {r}"));
             }
             // A command that reaches the path check has to be refused by the roots, so a missing
@@ -368,7 +374,7 @@ fn walk(tag: &str, read: bool, write: bool) -> Vec<String> {
             }
             if !args.is_empty() {
                 let r = mcp.tool(name, Value::Object(args));
-                if leaks(&r, target) {
+                if leaks(&r, &sent) {
                     found.push(format!("{name} {target}: {r}"));
                 }
             }
