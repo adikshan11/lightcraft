@@ -610,6 +610,8 @@ fn sidecar_has_news(labels: &Catalog, p: &Photo, naming: SidecarLookup, listing:
     // over for the next name, as a name that is no file was)
     let found = naming.candidates(path).find_map(|c| {
         let there = listing.or_ask(listing.is_file(&c), || crate::file_access::may_probe(&c) && c.is_file());
+        // (a name the roots refuse to be read is passed over for the next name, as one that is no file was)
+        let there = there && crate::file_access::check_read(&c).is_ok();
         let meta = there.then(|| std::fs::metadata(&c).ok()).flatten().filter(std::fs::Metadata::is_file)?;
         Some((c, meta))
     });
@@ -621,9 +623,6 @@ fn sidecar_has_news(labels: &Catalog, p: &Photo, naming: SidecarLookup, listing:
     let Some(saved) = saved.and_then(|s| i64::try_from(s).ok()) else { return false };
     let seen = [Some(p.imported.as_str()), p.edited.as_deref()].into_iter().flatten().filter_map(lightcraft_catalog::stacks::iso_seconds).max();
     if seen.is_some_and(|t| saved <= t) {
-        return false;
-    }
-    if crate::file_access::check_read(&file).is_err() {
         return false;
     }
     let Ok(text) = std::fs::read_to_string(&file) else { return false };

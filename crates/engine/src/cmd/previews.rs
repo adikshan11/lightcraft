@@ -767,6 +767,10 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
         jobs.push((id, path, source, preview_fitted_look(&ph)));
     }
     let custom = s.smart_previews_dir.is_some();
+    // (a folder the library saved is the library's own only where it keeps them by default: a custom one is judged by the roots)
+    if custom {
+        crate::file_access::check_write(&dir).map_err(|e| bad(C, e))?;
+    }
     if background {
         let what = if discard { "discarding smart previews" } else { "smart previews" };
         let state = Arc::new(PreviewBuild { total: jobs.len(), what, ..Default::default() });
