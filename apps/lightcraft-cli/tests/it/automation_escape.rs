@@ -303,10 +303,12 @@ fn leaks(reply: &Value, sent: &[String]) -> bool {
     let reply = reply.to_string();
     // what the caller itself sent comes back in a reply that records it (the journal lists the params of earlier calls):
     // that is its own words, not what the roots keep from it
+    // (compared without backslashes and quotes: a reply that holds JSON as text escapes a Windows path again and again)
+    let plain = |t: &str| t.replace(['\\', '"'], "");
+    let mut asked: Vec<String> = sent.iter().map(|t| plain(t)).collect();
     // (the longest first: a folder's path inside a file's would leave the rest of the file's name behind)
-    let mut asked: Vec<String> = sent.iter().map(|t| serde_json::to_string(t).unwrap_or_default().trim_matches('"').to_string()).collect();
     asked.sort_by_key(|a| std::cmp::Reverse(a.len()));
-    let mut rest = reply.clone();
+    let mut rest = plain(&reply);
     for a in &asked {
         rest = rest.replace(a.as_str(), "");
     }

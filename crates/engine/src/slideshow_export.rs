@@ -391,6 +391,8 @@ impl PartFile {
         let mut name = target.file_name().ok_or_else(|| format!("{}: not a file name", target.display()))?.to_os_string();
         name.push(".part");
         let part = target.with_file_name(name);
+        // (the staging name is judged like the target: beside a target at the edge of the write root it may lie outside it)
+        crate::file_access::check_write(&part)?;
         // an entry already under the staging name (a leftover, or a link planted to point the
         // encoder's bytes at another file) is removed, never opened and written through
         let _ = std::fs::remove_file(&part);
