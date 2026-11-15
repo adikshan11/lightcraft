@@ -1749,22 +1749,42 @@ fn the_import_index_of_a_library_outside_the_roots_is_read() {
     index.photos.insert("a.jpg".into(), 7);
     let file = interop.join(INDEX_FILE);
     std::fs::write(&file, serde_json::to_vec(&index).unwrap()).unwrap();
-    let read = confine(Some(&roots), || load_index(Some(&interop))).unwrap();
+    let read = confine(Some(&roots), || load_index(Some(&interop), None)).unwrap();
     assert_eq!(read.photos.get("a.jpg"), Some(&7));
-    assert!(confine(Some(&roots), || load_index(None)).unwrap().photos.is_empty());
+    assert!(confine(Some(&roots), || load_index(None, None)).unwrap().photos.is_empty());
     std::fs::remove_file(&file).unwrap();
-    assert!(confine(Some(&roots), || load_index(Some(&interop))).unwrap().photos.is_empty(), "none yet is an empty index");
+    assert!(confine(Some(&roots), || load_index(Some(&interop), None)).unwrap().photos.is_empty(), "none yet is an empty index");
     #[cfg(unix)]
     {
         let elsewhere = outside.join("index.json");
         std::fs::write(&elsewhere, serde_json::to_vec(&index).unwrap()).unwrap();
         std::os::unix::fs::symlink(&elsewhere, &file).unwrap();
-        let refused = confine(Some(&roots), || load_index(Some(&interop))).err().unwrap().to_string();
+        let refused = confine(Some(&roots), || load_index(Some(&interop), None)).err().unwrap().to_string();
         assert!(refused.contains("automation"), "{refused}");
         std::fs::remove_file(&file).unwrap();
         std::fs::hard_link(&elsewhere, &file).unwrap();
-        let refused = confine(Some(&roots), || load_index(Some(&interop))).err().unwrap().to_string();
+        let refused = confine(Some(&roots), || load_index(Some(&interop), None)).err().unwrap().to_string();
         assert!(refused.contains("more than one name"), "{refused}");
     }
+    let _ = std::fs::remove_dir_all(base);
+}
+
+/// The import index is not read as the library's own once an ancestor of the library folder has been swapped for a link.
+#[cfg(unix)]
+#[test]
+fn the_import_index_is_not_the_librarys_own_after_its_folder_is_swapped() {
+    use crate::file_access::{AutomationRoots, confine};
+    let base = crate::tests_xmp::temp_dir("lightroom-index-swap");
+    let (root, lib, elsewhere) = (base.join("root"), base.join("lib"), base.join("elsewhere"));
+    for d in [&root, &lib.join("Interop"), &elsewhere.join("Interop")] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(elsewhere.join("Interop").join(INDEX_FILE), serde_json::to_vec(&ImportIndex::default()).unwrap()).unwrap();
+    let opened = lightcraft_catalog::OpenedFolder::at(&lib).unwrap();
+    let roots = AutomationRoots::new(Some(&root), Some(&root)).unwrap().unwrap();
+    std::fs::rename(&lib, base.join("moved")).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &lib).unwrap();
+    let refused = confine(Some(&roots), || load_index(Some(&lib.join("Interop")), Some(&opened))).err().unwrap().to_string();
+    assert!(refused.contains("automation"), "{refused}");
     let _ = std::fs::remove_dir_all(base);
 }

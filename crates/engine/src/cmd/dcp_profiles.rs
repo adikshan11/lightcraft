@@ -75,7 +75,10 @@ pub(super) fn library_owned(s: &Session, dir: Option<&Path>, file: &Path) -> boo
     let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
     // (and the library folder is still the one that was opened: swapped for a link out of the roots, nothing in it is the library's own)
     dir.is_some_and(|d| file.parent() == Some(d) && !is_link(d) && !is_link(file))
-        && s.library.as_ref().is_none_or(crate::library::Library::folder_unchanged)
+        && match &s.opening_folder {
+            Some(f) => f.check().is_ok(),
+            None => s.library.as_ref().is_none_or(crate::library::Library::folder_unchanged),
+        }
 }
 
 /// Whether the profile file `file` may be written or removed, with `dir` the library's profiles folder.

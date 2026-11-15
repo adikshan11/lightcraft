@@ -251,12 +251,15 @@ pub(crate) const INDEX_FILE: &str = "lightroom-index.json";
 ///
 /// The folder is the operator's library, wherever the roots are, so the file is read without the
 /// agent's read check. A link in its place is judged like any path, and a file with a second name
-/// is refused: neither is the library's own file.
-pub(crate) fn load_index(archive_dir: Option<&Path>) -> crate::Result<ImportIndex> {
+/// is refused: neither is the library's own file. Nor is any file once the library folder (`library`, as it was opened)
+/// is not the folder its path names: a link further up could lead anywhere.
+pub(crate) fn load_index(archive_dir: Option<&Path>, library: Option<&lightcraft_catalog::OpenedFolder>) -> crate::Result<ImportIndex> {
     let Some(dir) = archive_dir else { return Ok(ImportIndex::default()) };
     let path = dir.join(INDEX_FILE);
     let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
-    let allowed = if is_link(dir) || is_link(&path) { crate::file_access::check_read(&path) } else { crate::file_access::reject_other_names(&path) };
+    let intact = library.is_none_or(|f| f.check().is_ok());
+    let allowed =
+        if !intact || is_link(dir) || is_link(&path) { crate::file_access::check_read(&path) } else { crate::file_access::reject_other_names(&path) };
     allowed.map_err(error)?;
     let file = match std::fs::File::open(&path) {
         Ok(file) => file,
@@ -1019,7 +1022,7 @@ pub fn import(s: &mut crate::Session, path: &Path, update_existing: bool) -> cra
 fn apply(s: &mut crate::Session, data: CatalogImport, update_existing: bool) -> crate::Result<Value> {
     let archive_dir = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("Interop"));
     let index_path = archive_dir.as_ref().map(|p| p.join(INDEX_FILE));
-    let mut index = load_index(archive_dir.as_deref())?;
+    let mut index = load_index(archive_dir.as_deref(), s.library.as_ref().and_then(|l| l.opened_folder()).as_ref())?;
     let archive_path = archive_dir.as_ref().map(|dir| crate::lightroom_archive::store(dir, &data).map_err(error)).transpose()?;
     let undo0 = s.undo.len();
     let existing: HashMap<_, _> =

@@ -256,6 +256,11 @@ struct ViewFile {
 }
 
 impl Library {
+    /// The folder this library was opened from, as it was recorded then (`None`: its stores were given).
+    pub(crate) fn opened_folder(&self) -> Option<OpenedFolder> {
+        self.folder.clone()
+    }
+
     /// Whether the folder this library was opened from is still the folder its path names (a library with no recorded
     /// folder always is).
     pub(crate) fn folder_unchanged(&self) -> bool {
@@ -660,9 +665,12 @@ impl Session {
         self.mask_tool_effects = prefs.mask_tool_effects;
         self.label_sets = prefs.label_sets;
         self.lut_profiles = prefs.lut_profiles;
+        // (the library is not installed yet: its profiles are judged against the folder it was opened from)
+        self.opening_folder = folder.clone();
         crate::cmd::lut_profiles::register_all(self, on_disk.then(|| dir.join("Profiles")).as_deref());
         self.dcp_profiles = prefs.dcp_profiles;
         crate::cmd::dcp_profiles::register_all(self, on_disk.then(|| dir.join("Profiles")).as_deref());
+        self.opening_folder = None;
         self.keyword_sets = prefs.keyword_sets;
         self.keyword_set = prefs.keyword_set;
         self.recent_keywords = prefs.recent_keywords;

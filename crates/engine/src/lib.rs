@@ -346,6 +346,8 @@ pub struct Session {
     pub(crate) library_identity: Arc<()>,
     /// This session's number, stable for its life; tells whose registrations in process-wide registries are whose.
     pub(crate) session_id: u64,
+    /// The folder of the library being opened, while its profiles are registered (it is not `library` yet).
+    pub(crate) opening_folder: Option<lightcraft_catalog::OpenedFolder>,
     /// XMP sidecar preferences (persisted with the library).
     pub xmp: sidecar::XmpPrefs,
     /// Parameters of the last export (`app.export` params, minus targets), persisted in prefs.json.
@@ -537,6 +539,7 @@ impl Session {
             library: None,
             library_identity: Arc::new(()),
             session_id: next_session_id(),
+            opening_folder: None,
             xmp: sidecar::XmpPrefs::default(),
             last_export: None,
             last_merge: Default::default(),
