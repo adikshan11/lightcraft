@@ -67,9 +67,8 @@ The rules:
   A directory is judged only by where it is.
   The library's own profile files are the one exception for writing: replacing or removing one drops that
   name only, so another name of the file keeps its bytes. Reading one with a second name is still refused.
-  Imported LUT looks are registered for the whole process under their id. A session whose roots refuse its own
-  copy of a look does not remove another session's registration of the same id, so two sessions in one process that
-  import looks of one name share that look.
+  Imported LUT looks are registered for the process with the session that made them. A session whose roots refuse its
+  own copy of a look does not find another session's look of the same id, and does not remove it either.
   A network drive that the operator mapped to a letter is a drive to the roots: telling it from a local one needs a system
   call this crate does not make. A path written as a share (`\\host\share`) is judged as written and refused unless a root is
   on that share.

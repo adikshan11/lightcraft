@@ -3,7 +3,8 @@
 //! the display-encoded output colour and blended by the profile amount. Profiles are registered
 //! here by id (`lut:…`) and found by the finishing stage (CPU loop and GPU kernel alike).
 
-use std::collections::HashMap;
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock, RwLock};
 
 /// A 3D colour lookup table.
@@ -87,27 +88,84 @@ impl Lut3d {
     }
 }
 
-fn registry() -> &'static RwLock<HashMap<String, Arc<Lut3d>>> {
-    static R: OnceLock<RwLock<HashMap<String, Arc<Lut3d>>>> = OnceLock::new();
+/// A registered LUT and the owners that made it available: `0` is shared by every scope, any other number is one
+/// session's (see [`in_scope`]).
+struct Entry {
+    lut: Arc<Lut3d>,
+    owners: HashSet<u64>,
+}
+
+fn registry() -> &'static RwLock<HashMap<String, Entry>> {
+    static R: OnceLock<RwLock<HashMap<String, Entry>>> = OnceLock::new();
     R.get_or_init(Default::default)
 }
 
-/// Make a LUT available to renders under profile id `id` (`lut:…`).
-pub fn register(id: &str, lut: Lut3d) {
-    registry().write().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), Arc::new(lut));
+thread_local! {
+    /// The session whose renders run on this thread (`None`: no session is named, every registered LUT may be used).
+    static SCOPE: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
-/// The LUT registered for profile `id`.
+/// Run `f` with renders on this thread resolving LUTs for session `owner`: a LUT only another session registered is
+/// not found. `None` names no session.
+pub fn in_scope<T>(owner: Option<u64>, f: impl FnOnce() -> T) -> T {
+    let before = SCOPE.with(|s| s.replace(owner));
+    let out = f();
+    SCOPE.with(|s| s.set(before));
+    out
+}
+
+/// The session whose renders run on this thread, to hand to a worker ([`in_scope`]).
+pub fn current_scope() -> Option<u64> {
+    SCOPE.with(Cell::get)
+}
+
+/// Make a LUT available to renders under profile id `id` (`lut:…`), to every scope.
+pub fn register(id: &str, lut: Lut3d) {
+    register_for(0, id, lut);
+}
+
+/// Make a LUT available to renders of session `owner` under profile id `id`. A session that made its own copy of the
+/// id shares the entry with the others that did; the last LUT registered is the one all of them use.
+pub fn register_for(owner: u64, id: &str, lut: Lut3d) {
+    let mut map = registry().write().unwrap_or_else(|e| e.into_inner());
+    match map.get_mut(id) {
+        Some(entry) => {
+            entry.lut = Arc::new(lut);
+            entry.owners.insert(owner);
+        }
+        None => {
+            map.insert(id.to_string(), Entry { lut: Arc::new(lut), owners: HashSet::from([owner]) });
+        }
+    }
+}
+
+/// The LUT registered for profile `id`, for the scope of this thread ([`in_scope`]).
 pub fn get(id: &str) -> Option<Arc<Lut3d>> {
     if !id.starts_with("lut:") {
         return None;
     }
-    registry().read().unwrap_or_else(|e| e.into_inner()).get(id).cloned()
+    let map = registry().read().unwrap_or_else(|e| e.into_inner());
+    let entry = map.get(id)?;
+    match current_scope() {
+        Some(scope) if !entry.owners.contains(&scope) && !entry.owners.contains(&0) => None,
+        _ => Some(entry.lut.clone()),
+    }
 }
 
-/// Forget a LUT profile.
+/// Forget a LUT profile, for every owner.
 pub fn unregister(id: &str) {
     registry().write().unwrap_or_else(|e| e.into_inner()).remove(id);
+}
+
+/// Forget session `owner`'s claim on a LUT profile; the LUT goes once no owner is left.
+pub fn unregister_for(owner: u64, id: &str) {
+    let mut map = registry().write().unwrap_or_else(|e| e.into_inner());
+    if let Some(entry) = map.get_mut(id) {
+        entry.owners.remove(&owner);
+        if entry.owners.is_empty() {
+            map.remove(id);
+        }
+    }
 }
 
 /// Profile ids that render with a LUT.
@@ -118,6 +176,23 @@ pub fn is_lut_profile(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A LUT registered for one session is found by that session and by a thread that names none, not by another session;
+    /// a shared one is found by all, and the LUT goes once its last owner lets it go.
+    #[test]
+    fn a_registered_lut_is_found_only_in_the_scope_of_its_owners() {
+        let lut = || Lut3d::parse_cube(&cube(|c| c, 2)).unwrap();
+        let (mine, shared) = ("lut:scope-test-mine", "lut:scope-test-shared");
+        register_for(4_000_001, mine, lut());
+        register(shared, lut());
+        let found = |scope: Option<u64>, id: &str| in_scope(scope, || get(id)).is_some();
+        assert!(found(Some(4_000_001), mine) && found(None, mine), "its owner and a thread that names no session");
+        assert!(!found(Some(4_000_002), mine), "not another session");
+        assert!(found(Some(4_000_002), shared), "a shared one is every session's");
+        unregister_for(4_000_001, mine);
+        assert!(!found(None, mine), "gone with its last owner");
+        unregister(shared);
+    }
 
     fn cube(f: impl Fn([f32; 3]) -> [f32; 3], n: usize) -> String {
         let mut s = format!("TITLE \"test\"\nLUT_3D_SIZE {n}\n");

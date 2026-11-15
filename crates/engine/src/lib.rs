@@ -626,7 +626,10 @@ impl Session {
         let was_active = self.active();
         self.depth += 1;
         // last-resort guard: a panic in a command is that command's error, not a crash
-        let r = guard::catch(&format!("`{id}`"), || f(self)).unwrap_or_else(|e| Err(EngineError::Other(e)));
+        // (renders this command makes find the LUTs of this session)
+        let session = self.session_id;
+        let r = guard::catch(&format!("`{id}`"), || lightcraft_pipeline::lut::in_scope(Some(session), || f(self)))
+            .unwrap_or_else(|e| Err(EngineError::Other(e)));
         self.depth -= 1;
         if self.depth == 0 && was_active.is_some() && self.active() != was_active {
             self.previous_active = was_active;
