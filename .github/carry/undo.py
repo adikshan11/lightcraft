@@ -83,7 +83,7 @@ MUTATIONS = [
      [("scope.run(move || self.run_in_scope(progress, send));", "let _ = &scope;\n        self.run_in_scope(progress, send);")],
      "lightcraft-engine", ["the_work_runs_under_the_roots_of_whoever_started_it"], False),
     ("a handoff that hands over nothing", ENGINE + "file_access.rs",
-     [("        confine(self.0.as_ref(), f)\n    }\n}\n\n/// The roots in force on this thread now", "        f()\n    }\n}\n\n/// The roots in force on this thread now")],
+     [("lightcraft_pipeline::lut::in_scope(self.1, || confine(self.0.as_ref(), f))", "lightcraft_pipeline::lut::in_scope(self.1, f)")],
      "lightcraft-engine", ["a_handoff_puts_the_roots_in_force_on_another_thread"], False),
     ("export lanes reading with no roots", ENGINE + "export/batch.rs",
      [("move || lane_roots.run(|| q.work())", "move || {\n                let _ = &lane_roots;\n                q.work()\n            }")],
