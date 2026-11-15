@@ -95,6 +95,7 @@ struct Entry {
     owners: HashSet<u64>,
 }
 
+/// The process-wide registry of LUTs by profile id.
 fn registry() -> &'static RwLock<HashMap<String, Entry>> {
     static R: OnceLock<RwLock<HashMap<String, Entry>>> = OnceLock::new();
     R.get_or_init(Default::default)

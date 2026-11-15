@@ -621,6 +621,8 @@ impl Session {
         self.run_command(id, None, f)
     }
 
+    /// Run `f` as command `id` with the guard, the auto versions, the sidecar auto-write and the durable save (see
+    /// [`Session::execute_fn`]), journaling `journal` when given.
     fn run_command(&mut self, id: &str, journal: Option<&Value>, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
         let log_start = self.pending_log.len();
         let was_active = self.active();
