@@ -198,10 +198,15 @@ impl Availability {
     fn sweep_checked(&self, epoch: Option<u64>, paths: Vec<String>) -> bool {
         let Some(wake) = &self.background else { return false };
         let mut st = lock(&self.state);
-        // (first: a change of roots drops what was queued for the old ones, and must not drop this sweep with it)
+        // (a collector that is out of date changes nothing, not even whose answers the cache holds)
+        if epoch.is_some_and(|e| e != st.sweep_epoch) {
+            return false;
+        }
+        // (then, before the sweep is assigned: a change of roots drops what was queued for the old ones, and must not
+        // drop this sweep with it)
         let scope = crate::file_access::handoff();
         st.adopt(&scope);
-        if !st.sweep.is_empty() || epoch.is_some_and(|e| e != st.sweep_epoch) {
+        if !st.sweep.is_empty() {
             return false;
         }
         st.sweep = paths.into();

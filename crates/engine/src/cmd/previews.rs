@@ -692,6 +692,10 @@ fn smart_run(
                         crate::smart::encode(&src.image, Some(&info))
                     })
                     .and_then(|b| {
+                        // (the proxy is judged where it will lie, under the roots of the thread that builds it)
+                        if custom {
+                            crate::file_access::check_write(&path)?;
+                        }
                         let parent = path.parent().ok_or_else(|| format!("{}: no parent folder", path.display()))?;
                         // Only create the leaf shard: do not recreate a missing external drive.
                         if !parent.is_dir() {
@@ -838,6 +842,8 @@ pub(crate) fn refresh_stale_smart_previews(s: &mut Session) -> Option<std::threa
     let jobs: Vec<SmartJob> = photos
         .iter()
         .map(|p| (p.id, crate::smart::sharded_file_path(&dir, p), Some(s.media.origin_ref(&p.source, max_edge)), preview_fitted_look(p)))
+        // (a custom folder is judged by the roots, each proxy where it lies: its shard folder may be a link out of it)
+        .filter(|(_, path, _, _)| s.smart_previews_dir.is_none() || crate::file_access::check_write(path).is_ok())
         .collect();
     // (the refresh reads originals and writes proxies: under the roots of the session that started it)
     let roots = crate::file_access::handoff();
