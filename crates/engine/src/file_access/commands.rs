@@ -455,6 +455,16 @@ pub fn check_command(id: &str, params: &Value) -> Result<(), String> {
                     at = at.and_then(|v| v.get(part));
                 }
                 match (at, first_cells) {
+                    // a folder that new files are made in: a link to one is judged by where it leads
+                    (Some(Value::String(dir)), false) if CONTAINERS.contains(&(id, name)) => {
+                        if !dir.is_empty() {
+                            super::check_write_container(dir)?;
+                            let trimmed = dir.trim();
+                            if trimmed != dir && !trimmed.is_empty() {
+                                super::check_write_container(trimmed)?;
+                            }
+                        }
+                    }
                     (Some(rows), true) => check_rows(rows, *access)?,
                     (Some(value), false) => check_value(value, *access, MAX_DEPTH)?,
                     (None, _) => {}
@@ -464,6 +474,10 @@ pub fn check_command(id: &str, params: &Value) -> Result<(), String> {
         }
     }
 }
+
+/// Parameters (command, name) that name a folder new files are made in, checked as one rather than as a file to write:
+/// a link to a folder is judged by where it leads, so an alias of the write root is the write root.
+pub const CONTAINERS: &[(&str, &str)] = &[("library.import", "destination"), ("app.export", "dir"), ("folder.create", "parent")];
 
 /// Check the first cell of each row of `rows`, a list of `[path, …]`: the cells after it (a size) are
 /// not paths. A row that isn't a list with a path in front is refused, not skipped.
@@ -608,6 +622,25 @@ mod tests {
             assert!(scan(json!([123])).unwrap_err().contains("start with a path"));
             assert!(scan(json!("a path")).unwrap_err().contains("must be a list"));
             assert!(scan(json!([[123, inside]])).is_err(), "a size where the path goes is not a path");
+        });
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A folder that new files are made in may be named by a link to the write root, and not by one that leads out of it.
+    #[cfg(unix)]
+    #[test]
+    fn a_destination_folder_may_alias_the_write_root() {
+        let (base, roots) = roots("container-alias");
+        let (alias, away) = (base.join("outside/alias"), base.join("outside/away"));
+        std::os::unix::fs::symlink(base.join("out"), &alias).unwrap();
+        std::os::unix::fs::symlink(base.join("outside"), &away).unwrap();
+        confine(Some(&roots), || {
+            for (id, name) in CONTAINERS {
+                let at = |dir: &std::path::Path| with_param(name, json!(dir.to_string_lossy()));
+                assert!(check_command(id, &at(&alias)).is_ok(), "{id}.{name}: an alias of the write root");
+                let refused = check_command(id, &at(&away)).unwrap_err();
+                assert!(refused.contains("automation"), "{id}.{name}: {refused}");
+            }
         });
         let _ = std::fs::remove_dir_all(&base);
     }
